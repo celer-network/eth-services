@@ -6,16 +6,16 @@ import (
 	"time"
 )
 
-type Options struct {
+type Config struct {
 	Logger           Logger
 	BlockTime        time.Duration
 	RPCURL           *url.URL
 	SecondaryRPCURLs []*url.URL
 	ChainID          *big.Int
 
-	HeadTrackerHistoryDepth  uint
+	HeadTrackerHistoryDepth  uint64
 	HeadTrackerMaxBufferSize int
-	FinalityDepth            int
+	FinalityDepth            uint64
 
 	DefaultGasPrice uint64
 }

@@ -108,19 +108,18 @@ func (a EthTxAttempt) GetSignedTx() (*types.Transaction, error) {
 
 // Head represents a BlockNumber, BlockHash.
 type Head struct {
-	ID         uint64
 	Hash       common.Hash
-	Number     int64
+	Number     uint64
 	ParentHash common.Hash
-	Parent     *Head
 	Timestamp  time.Time
-	CreatedAt  time.Time
+
+	Parent *Head // not persisted, filled in Chain()
 }
 
 // NewHead returns a Head instance.
 func NewHead(number *big.Int, blockHash common.Hash, parentHash common.Hash, timestamp uint64) Head {
 	return Head{
-		Number:     number.Int64(),
+		Number:     number.Uint64(),
 		Hash:       blockHash,
 		ParentHash: parentHash,
 		Timestamp:  time.Unix(int64(timestamp), 0),
@@ -140,8 +139,8 @@ func (h Head) EarliestInChain() Head {
 }
 
 // ChainLength returns the length of the chain followed by recursively looking up parents
-func (h Head) ChainLength() uint32 {
-	l := uint32(1)
+func (h Head) ChainLength() uint64 {
+	l := uint64(1)
 
 	for {
 		if h.Parent != nil {
@@ -164,7 +163,7 @@ func (h *Head) ToInt() *big.Int {
 	if h == nil {
 		return nil
 	}
-	return big.NewInt(h.Number)
+	return new(big.Int).SetUint64(h.Number)
 }
 
 // GreaterThan compares BlockNumbers and returns true if the receiver BlockNumber is greater than
@@ -207,7 +206,7 @@ func (h *Head) UnmarshalJSON(bs []byte) error {
 	}
 
 	h.Hash = jsonHead.Hash
-	h.Number = (*big.Int)(jsonHead.Number).Int64()
+	h.Number = (*big.Int)(jsonHead.Number).Uint64()
 	h.ParentHash = jsonHead.ParentHash
 	h.Timestamp = time.Unix(int64(jsonHead.Timestamp), 0).UTC()
 	return nil

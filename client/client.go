@@ -19,6 +19,11 @@ import (
 	"github.com/pkg/errors"
 )
 
+//go:generate mockery --name Client --output ../internal/mocks/ --case=underscore
+//go:generate mockery --name GethClient --output ../internal/mocks/ --case=underscore
+//go:generate mockery --name RPCClient --output ../internal/mocks/ --case=underscore
+//go:generate mockery --name Subscription --output ../internal/mocks/ --case=underscore
+
 // Client is the interface used to interact with an ethereum node.
 type Client interface {
 	GethClient
@@ -62,9 +67,14 @@ type RPCClient interface {
 	Close()
 }
 
-// client implements the ethereum Client interface using a
-// CallerSubscriber instance.
-type client struct {
+// Subscription is an interface for mock generation. It is identical to `ethereum.Subscription`.
+type Subscription interface {
+	Err() <-chan error
+	Unsubscribe()
+}
+
+// Impl implements the ethereum Client interface using a CallerSubscriber instance.
+type Impl struct {
 	GethClient
 	RPCClient
 	url                  string // For reestablishing the connection after a disconnect
@@ -75,9 +85,10 @@ type client struct {
 	logger               estypes.Logger
 }
 
-var _ Client = (*client)(nil)
+var _ Client = (*Impl)(nil)
 
-func NewClient(rpcURL string, secondaryRPCURLs ...url.URL) (*client, error) {
+// NewImpl creates a new client implementation
+func NewImpl(rpcURL string, secondaryRPCURLs ...url.URL) (*Impl, error) {
 	parsed, err := url.ParseRequestURI(rpcURL)
 	if err != nil {
 		return nil, err
@@ -91,10 +102,10 @@ func NewClient(rpcURL string, secondaryRPCURLs ...url.URL) (*client, error) {
 			return nil, errors.Errorf("secondary Ethereum RPC URL scheme must be http(s): %s", url.String())
 		}
 	}
-	return &client{url: rpcURL, secondaryURLs: secondaryRPCURLs}, nil
+	return &Impl{url: rpcURL, secondaryURLs: secondaryRPCURLs}, nil
 }
 
-func (client *client) Dial(ctx context.Context) error {
+func (client *Impl) Dial(ctx context.Context) error {
 	client.logger.Debugf("eth.Client#Dial(...)")
 	if client.mocked {
 		return nil
@@ -123,16 +134,16 @@ func (client *client) Dial(ctx context.Context) error {
 }
 
 // SendRawTx sends a signed transaction to the transaction pool.
-func (client *client) SendRawTx(bytes []byte) (common.Hash, error) {
+func (client *Impl) SendRawTx(bytes []byte) (common.Hash, error) {
 	client.logger.Debugf("eth.Client#SendRawTx(...) bytes: %v", bytes)
 	result := common.Hash{}
 	err := client.RPCClient.Call(&result, "eth_sendRawTransaction", hexutil.Encode(bytes))
 	return result, err
 }
 
-// We wrap the GethClient's `TransactionReceipt` method so that we can ignore the error that arises
-// when we're talking to a Parity node that has no receipt yet.
-func (client *client) TransactionReceipt(ctx context.Context, txHash common.Hash) (*types.Receipt, error) {
+// TransactionReceipt wraps the GethClient's `TransactionReceipt` method so that we can ignore the
+// error that arises when we're talking to a Parity node that has no receipt yet.
+func (client *Impl) TransactionReceipt(ctx context.Context, txHash common.Hash) (*types.Receipt, error) {
 	client.logger.Debugf("eth.Client#TransactionReceipt(...) tx",
 		"txHash", txHash,
 	)
@@ -143,13 +154,13 @@ func (client *client) TransactionReceipt(ctx context.Context, txHash common.Hash
 	return receipt, err
 }
 
-func (client *client) ChainID(ctx context.Context) (*big.Int, error) {
+func (client *Impl) ChainID(ctx context.Context) (*big.Int, error) {
 	client.logger.Debugf("eth.Client#ChainID(...)")
 	return client.GethClient.ChainID(ctx)
 }
 
 // SendTransaction also uses the secondary HTTP RPC URL if set
-func (client *client) SendTransaction(ctx context.Context, tx *types.Transaction) error {
+func (client *Impl) SendTransaction(ctx context.Context, tx *types.Transaction) error {
 	client.logger.Debugf("eth.Client#SendTransaction(...)",
 		"tx", tx,
 	)
@@ -169,47 +180,47 @@ func (client *client) SendTransaction(ctx context.Context, tx *types.Transaction
 				// the primary SendTransaction may well have succeeded already
 				return
 			}
-			client.logger.Warningf("secondary eth client returned error", "err", err, "tx", tx)
+			client.logger.Warnf("secondary eth client returned error", "err", err, "tx", tx)
 		}(gethClient)
 	}
 
 	return client.GethClient.SendTransaction(ctx, tx)
 }
 
-func (client *client) PendingNonceAt(ctx context.Context, account common.Address) (uint64, error) {
+func (client *Impl) PendingNonceAt(ctx context.Context, account common.Address) (uint64, error) {
 	client.logger.Debugf("eth.Client#PendingNonceAt(...)",
 		"account", account,
 	)
 	return client.GethClient.PendingNonceAt(ctx, account)
 }
 
-func (client *client) PendingCodeAt(ctx context.Context, account common.Address) ([]byte, error) {
+func (client *Impl) PendingCodeAt(ctx context.Context, account common.Address) ([]byte, error) {
 	client.logger.Debugf("eth.Client#PendingCodeAt(...)",
 		"account", account,
 	)
 	return client.GethClient.PendingCodeAt(ctx, account)
 }
 
-func (client *client) EstimateGas(ctx context.Context, call ethereum.CallMsg) (gas uint64, err error) {
+func (client *Impl) EstimateGas(ctx context.Context, call ethereum.CallMsg) (gas uint64, err error) {
 	client.logger.Debugf("eth.Client#EstimateGas(...)",
 		"call", call,
 	)
 	return client.GethClient.EstimateGas(ctx, call)
 }
 
-func (client *client) SuggestGasPrice(ctx context.Context) (*big.Int, error) {
+func (client *Impl) SuggestGasPrice(ctx context.Context) (*big.Int, error) {
 	client.logger.Debugf("eth.Client#SuggestGasPrice()")
 	return client.GethClient.SuggestGasPrice(ctx)
 }
 
-func (client *client) BlockByNumber(ctx context.Context, number *big.Int) (*types.Block, error) {
+func (client *Impl) BlockByNumber(ctx context.Context, number *big.Int) (*types.Block, error) {
 	client.logger.Debugf("eth.Client#BlockByNumber(...)",
 		"number", number,
 	)
 	return client.GethClient.BlockByNumber(ctx, number)
 }
 
-func (client *client) HeaderByNumber(ctx context.Context, number *big.Int) (*models.Head, error) {
+func (client *Impl) HeaderByNumber(ctx context.Context, number *big.Int) (*models.Head, error) {
 	client.logger.Debugf("eth.Client#HeaderByNumber(...)",
 		"number", number,
 	)
@@ -228,7 +239,7 @@ func toBlockNumArg(number *big.Int) string {
 	return hexutil.EncodeBig(number)
 }
 
-func (client *client) BalanceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (*big.Int, error) {
+func (client *Impl) BalanceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (*big.Int, error) {
 	client.logger.Debugf("eth.Client#BalanceAt(...)",
 		"account", account,
 		"blockNumber", blockNumber,
@@ -236,26 +247,26 @@ func (client *client) BalanceAt(ctx context.Context, account common.Address, blo
 	return client.GethClient.BalanceAt(ctx, account, blockNumber)
 }
 
-func (client *client) FilterLogs(ctx context.Context, q ethereum.FilterQuery) ([]types.Log, error) {
+func (client *Impl) FilterLogs(ctx context.Context, q ethereum.FilterQuery) ([]types.Log, error) {
 	client.logger.Debugf("eth.Client#FilterLogs(...)",
 		"q", q,
 	)
 	return client.GethClient.FilterLogs(ctx, q)
 }
 
-func (client *client) SubscribeFilterLogs(ctx context.Context, q ethereum.FilterQuery, ch chan<- types.Log) (ethereum.Subscription, error) {
+func (client *Impl) SubscribeFilterLogs(ctx context.Context, q ethereum.FilterQuery, ch chan<- types.Log) (ethereum.Subscription, error) {
 	client.logger.Debugf("eth.Client#SubscribeFilterLogs(...)",
 		"q", q,
 	)
 	return client.GethClient.SubscribeFilterLogs(ctx, q, ch)
 }
 
-func (client *client) SubscribeNewHead(ctx context.Context, ch chan<- *models.Head) (ethereum.Subscription, error) {
+func (client *Impl) SubscribeNewHead(ctx context.Context, ch chan<- *models.Head) (ethereum.Subscription, error) {
 	client.logger.Debugf("eth.Client#SubscribeNewHead(...)")
 	return client.RPCClient.EthSubscribe(ctx, ch, "newHeads")
 }
 
-// TODO: remove this wrapper type once cltest.EthMock is no longer in use.
+// TODO: remove this wrapper type once EthMock is no longer in use in upstream.
 type rpcClientWrapper struct {
 	*rpc.Client
 }
@@ -264,7 +275,7 @@ func (w *rpcClientWrapper) EthSubscribe(ctx context.Context, channel interface{}
 	return w.Client.EthSubscribe(ctx, channel, args...)
 }
 
-func (client *client) Call(result interface{}, method string, args ...interface{}) error {
+func (client *Impl) Call(result interface{}, method string, args ...interface{}) error {
 	client.logger.Debugf("eth.Client#Call(...)",
 		"method", method,
 		"args", args,
@@ -272,7 +283,7 @@ func (client *client) Call(result interface{}, method string, args ...interface{
 	return client.RPCClient.Call(result, method, args...)
 }
 
-func (client *client) CallContext(ctx context.Context, result interface{}, method string, args ...interface{}) error {
+func (client *Impl) CallContext(ctx context.Context, result interface{}, method string, args ...interface{}) error {
 	client.logger.Debugf("eth.Client#Call(...)",
 		"method", method,
 		"args", args,

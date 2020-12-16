@@ -71,7 +71,7 @@ func timedUnsubscribe(unsubscriber Unsubscriber, logger types.Logger) {
 	select {
 	case <-unsubscribed:
 	case <-time.After(100 * time.Millisecond):
-		logger.Warningf("Subscription %T Unsubscribe timed out.", unsubscriber)
+		logger.Warnf("Subscription %T Unsubscribe timed out.", unsubscriber)
 	}
 }
 
