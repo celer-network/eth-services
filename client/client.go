@@ -106,7 +106,7 @@ func NewImpl(rpcURL string, secondaryRPCURLs ...url.URL) (*Impl, error) {
 }
 
 func (client *Impl) Dial(ctx context.Context) error {
-	client.logger.Debugf("eth.Client#Dial(...)")
+	client.logger.Debugw("eth.Client#Dial(...)")
 	if client.mocked {
 		return nil
 	} else if client.RPCClient != nil || client.GethClient != nil {
@@ -135,7 +135,9 @@ func (client *Impl) Dial(ctx context.Context) error {
 
 // SendRawTx sends a signed transaction to the transaction pool.
 func (client *Impl) SendRawTx(bytes []byte) (common.Hash, error) {
-	client.logger.Debugf("eth.Client#SendRawTx(...) bytes: %v", bytes)
+	client.logger.Debugw("eth.Client#SendRawTx(...)",
+		"bytes", bytes,
+	)
 	result := common.Hash{}
 	err := client.RPCClient.Call(&result, "eth_sendRawTransaction", hexutil.Encode(bytes))
 	return result, err
@@ -144,7 +146,7 @@ func (client *Impl) SendRawTx(bytes []byte) (common.Hash, error) {
 // TransactionReceipt wraps the GethClient's `TransactionReceipt` method so that we can ignore the
 // error that arises when we're talking to a Parity node that has no receipt yet.
 func (client *Impl) TransactionReceipt(ctx context.Context, txHash common.Hash) (*types.Receipt, error) {
-	client.logger.Debugf("eth.Client#TransactionReceipt(...) tx",
+	client.logger.Debugw("eth.Client#TransactionReceipt(...)",
 		"txHash", txHash,
 	)
 	receipt, err := client.GethClient.TransactionReceipt(ctx, txHash)
@@ -155,19 +157,19 @@ func (client *Impl) TransactionReceipt(ctx context.Context, txHash common.Hash) 
 }
 
 func (client *Impl) ChainID(ctx context.Context) (*big.Int, error) {
-	client.logger.Debugf("eth.Client#ChainID(...)")
+	client.logger.Debugw("eth.Client#ChainID(...)")
 	return client.GethClient.ChainID(ctx)
 }
 
 // SendTransaction also uses the secondary HTTP RPC URL if set
 func (client *Impl) SendTransaction(ctx context.Context, tx *types.Transaction) error {
-	client.logger.Debugf("eth.Client#SendTransaction(...)",
+	client.logger.Debugw("eth.Client#SendTransaction(...)",
 		"tx", tx,
 	)
 
 	for _, gethClient := range client.SecondaryGethClients {
 		// Parallel send to secondary node
-		client.logger.Tracef("eth.SecondaryClient#SendTransaction(...)", "tx", tx)
+		client.logger.Tracew("eth.SecondaryClient#SendTransaction(...)", "tx", tx)
 
 		var wg sync.WaitGroup
 		defer wg.Wait()
@@ -188,40 +190,40 @@ func (client *Impl) SendTransaction(ctx context.Context, tx *types.Transaction) 
 }
 
 func (client *Impl) PendingNonceAt(ctx context.Context, account common.Address) (uint64, error) {
-	client.logger.Debugf("eth.Client#PendingNonceAt(...)",
+	client.logger.Debugw("eth.Client#PendingNonceAt(...)",
 		"account", account,
 	)
 	return client.GethClient.PendingNonceAt(ctx, account)
 }
 
 func (client *Impl) PendingCodeAt(ctx context.Context, account common.Address) ([]byte, error) {
-	client.logger.Debugf("eth.Client#PendingCodeAt(...)",
+	client.logger.Debugw("eth.Client#PendingCodeAt(...)",
 		"account", account,
 	)
 	return client.GethClient.PendingCodeAt(ctx, account)
 }
 
 func (client *Impl) EstimateGas(ctx context.Context, call ethereum.CallMsg) (gas uint64, err error) {
-	client.logger.Debugf("eth.Client#EstimateGas(...)",
+	client.logger.Debugw("eth.Client#EstimateGas(...)",
 		"call", call,
 	)
 	return client.GethClient.EstimateGas(ctx, call)
 }
 
 func (client *Impl) SuggestGasPrice(ctx context.Context) (*big.Int, error) {
-	client.logger.Debugf("eth.Client#SuggestGasPrice()")
+	client.logger.Debugw("eth.Client#SuggestGasPrice()")
 	return client.GethClient.SuggestGasPrice(ctx)
 }
 
 func (client *Impl) BlockByNumber(ctx context.Context, number *big.Int) (*types.Block, error) {
-	client.logger.Debugf("eth.Client#BlockByNumber(...)",
+	client.logger.Debugw("eth.Client#BlockByNumber(...)",
 		"number", number,
 	)
 	return client.GethClient.BlockByNumber(ctx, number)
 }
 
 func (client *Impl) HeaderByNumber(ctx context.Context, number *big.Int) (*models.Head, error) {
-	client.logger.Debugf("eth.Client#HeaderByNumber(...)",
+	client.logger.Debugw("eth.Client#HeaderByNumber(...)",
 		"number", number,
 	)
 	var head *models.Head
@@ -240,7 +242,7 @@ func toBlockNumArg(number *big.Int) string {
 }
 
 func (client *Impl) BalanceAt(ctx context.Context, account common.Address, blockNumber *big.Int) (*big.Int, error) {
-	client.logger.Debugf("eth.Client#BalanceAt(...)",
+	client.logger.Debug("eth.Client#BalanceAt(...)",
 		"account", account,
 		"blockNumber", blockNumber,
 	)
@@ -248,21 +250,21 @@ func (client *Impl) BalanceAt(ctx context.Context, account common.Address, block
 }
 
 func (client *Impl) FilterLogs(ctx context.Context, q ethereum.FilterQuery) ([]types.Log, error) {
-	client.logger.Debugf("eth.Client#FilterLogs(...)",
+	client.logger.Debugw("eth.Client#FilterLogs(...)",
 		"q", q,
 	)
 	return client.GethClient.FilterLogs(ctx, q)
 }
 
 func (client *Impl) SubscribeFilterLogs(ctx context.Context, q ethereum.FilterQuery, ch chan<- types.Log) (ethereum.Subscription, error) {
-	client.logger.Debugf("eth.Client#SubscribeFilterLogs(...)",
+	client.logger.Debugw("eth.Client#SubscribeFilterLogs(...)",
 		"q", q,
 	)
 	return client.GethClient.SubscribeFilterLogs(ctx, q, ch)
 }
 
 func (client *Impl) SubscribeNewHead(ctx context.Context, ch chan<- *models.Head) (ethereum.Subscription, error) {
-	client.logger.Debugf("eth.Client#SubscribeNewHead(...)")
+	client.logger.Debugw("eth.Client#SubscribeNewHead(...)")
 	return client.RPCClient.EthSubscribe(ctx, ch, "newHeads")
 }
 
@@ -276,7 +278,7 @@ func (w *rpcClientWrapper) EthSubscribe(ctx context.Context, channel interface{}
 }
 
 func (client *Impl) Call(result interface{}, method string, args ...interface{}) error {
-	client.logger.Debugf("eth.Client#Call(...)",
+	client.logger.Debugw("eth.Client#Call(...)",
 		"method", method,
 		"args", args,
 	)
@@ -284,7 +286,7 @@ func (client *Impl) Call(result interface{}, method string, args ...interface{})
 }
 
 func (client *Impl) CallContext(ctx context.Context, result interface{}, method string, args ...interface{}) error {
-	client.logger.Debugf("eth.Client#Call(...)",
+	client.logger.Debugw("eth.Client#Call(...)",
 		"method", method,
 		"args", args,
 	)

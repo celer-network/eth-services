@@ -1,18 +1,16 @@
 package testing
 
 import (
-	"crypto/rand"
 	"fmt"
 	"math/big"
 	"testing"
 	"time"
 
-	eslogger "github.com/celer-network/eth-services/logger"
+	esLogger "github.com/celer-network/eth-services/logger"
 	"github.com/celer-network/eth-services/store"
 	"github.com/celer-network/eth-services/store/models"
 	"github.com/celer-network/eth-services/store/tendermint"
 	"github.com/celer-network/eth-services/types"
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
 	tmdb "github.com/tendermint/tm-db"
 	"go.uber.org/zap"
@@ -31,8 +29,9 @@ func NewConfig(t testing.TB) *types.Config {
 
 	logger, err := zap.NewDevelopment()
 	require.NoError(t, err)
+	defaultGasPrice := big.NewInt(20000000000) // 20 gwei
 	return &types.Config{
-		Logger:                   eslogger.NewZapLogger(logger.Sugar()),
+		Logger:                   esLogger.NewZapLogger(logger.Sugar()),
 		BlockTime:                time.Second,
 		RPCURL:                   nil,
 		SecondaryRPCURLs:         nil,
@@ -41,13 +40,12 @@ func NewConfig(t testing.TB) *types.Config {
 		HeadTrackerMaxBufferSize: 100,
 		FinalityDepth:            12,
 
-		DefaultGasPrice: 10 * 1e18,
+		KeysDir:         "/tmp/eth-service-test/keys",
+		DefaultGasPrice: defaultGasPrice,
+		MaxGasPrice:     new(big.Int).Mul(defaultGasPrice, big.NewInt(10)),
+		GasBumpWei:      big.NewInt(5000000000),
+		GasBumpPercent:  11,
 	}
-}
-
-// NewHash return random Keccak256
-func NewHash() common.Hash {
-	return common.BytesToHash(randomBytes(32))
 }
 
 // Head given the value convert it into an Head
@@ -67,10 +65,4 @@ func Head(val interface{}) *models.Head {
 		panic(fmt.Sprintf("Could not convert %v of type %T to Head", val, val))
 	}
 	return &h
-}
-
-func randomBytes(n int) []byte {
-	b := make([]byte, n)
-	rand.Read(b)
-	return b
 }

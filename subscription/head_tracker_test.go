@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/celer-network/eth-services/internal/mocks"
-	estesting "github.com/celer-network/eth-services/internal/testing"
-	esstore "github.com/celer-network/eth-services/store"
+	esTesting "github.com/celer-network/eth-services/internal/testing"
+	esStore "github.com/celer-network/eth-services/store"
 	"github.com/celer-network/eth-services/store/models"
 	"github.com/celer-network/eth-services/subscription"
 	ethereum "github.com/ethereum/go-ethereum"
@@ -27,8 +27,8 @@ import (
 func TestHeadTracker_New(t *testing.T) {
 	t.Parallel()
 
-	store := estesting.NewStore(t)
-	config := estesting.NewConfig(t)
+	store := esTesting.NewStore(t)
+	config := esTesting.NewConfig(t)
 
 	sub := new(mocks.Subscription)
 	ethClient := new(mocks.Client)
@@ -36,10 +36,10 @@ func TestHeadTracker_New(t *testing.T) {
 	ethClient.On("SubscribeNewHead", mock.Anything, mock.Anything).Return(sub, nil)
 	sub.On("Err").Return(nil)
 
-	assert.Nil(t, store.InsertHead(*estesting.Head(1)))
-	last := estesting.Head(16)
+	assert.Nil(t, store.InsertHead(*esTesting.Head(1)))
+	last := esTesting.Head(16)
 	assert.Nil(t, store.InsertHead(*last))
-	assert.Nil(t, store.InsertHead(*estesting.Head(10)))
+	assert.Nil(t, store.InsertHead(*esTesting.Head(10)))
 
 	ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{})
 	assert.Nil(t, ht.Start())
@@ -49,8 +49,8 @@ func TestHeadTracker_New(t *testing.T) {
 func TestHeadTracker_Save_InsertsAndTrims(t *testing.T) {
 	t.Parallel()
 
-	store := estesting.NewStore(t)
-	config := estesting.NewConfig(t)
+	store := esTesting.NewStore(t)
+	config := esTesting.NewConfig(t)
 
 	config.HeadTrackerHistoryDepth = 100
 
@@ -58,12 +58,12 @@ func TestHeadTracker_Save_InsertsAndTrims(t *testing.T) {
 	ethClient.On("ChainID", mock.Anything).Return(config.ChainID, nil)
 
 	for i := 0; i < 200; i++ {
-		assert.Nil(t, store.InsertHead(*estesting.Head(i)))
+		assert.Nil(t, store.InsertHead(*esTesting.Head(i)))
 	}
 
 	ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{})
 
-	h := estesting.Head(200)
+	h := esTesting.Head(200)
 	require.NoError(t, ht.Save(*h))
 	assert.Equal(t, big.NewInt(200), ht.HighestSeenHead().ToInt())
 
@@ -79,7 +79,7 @@ func TestHeadTracker_Save_InsertsAndTrims(t *testing.T) {
 func TestHeadTracker_Get(t *testing.T) {
 	t.Parallel()
 
-	start := estesting.Head(5)
+	start := esTesting.Head(5)
 
 	tests := []struct {
 		name    string
@@ -87,17 +87,17 @@ func TestHeadTracker_Get(t *testing.T) {
 		toSave  *models.Head
 		want    *big.Int
 	}{
-		{"greater", start, estesting.Head(6), big.NewInt(6)},
-		{"less than", start, estesting.Head(1), big.NewInt(5)},
-		{"zero", start, estesting.Head(0), big.NewInt(5)},
+		{"greater", start, esTesting.Head(6), big.NewInt(6)},
+		{"less than", start, esTesting.Head(1), big.NewInt(5)},
+		{"zero", start, esTesting.Head(0), big.NewInt(5)},
 		{"nil", start, nil, big.NewInt(5)},
 		{"nil no initial", nil, nil, nil},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			store := estesting.NewStore(t)
-			config := estesting.NewConfig(t)
+			store := esTesting.NewStore(t)
+			config := esTesting.NewConfig(t)
 
 			ethClient := new(mocks.Client)
 			sub := new(mocks.Subscription)
@@ -112,7 +112,7 @@ func TestHeadTracker_Get(t *testing.T) {
 			fnCall := ethClient.On("HeaderByNumber", mock.Anything, mock.Anything)
 			fnCall.RunFn = func(args mock.Arguments) {
 				num := args.Get(1).(*big.Int)
-				fnCall.ReturnArguments = mock.Arguments{estesting.Head(num.Int64()), nil}
+				fnCall.ReturnArguments = mock.Arguments{esTesting.Head(num.Int64()), nil}
 			}
 
 			if test.initial != nil {
@@ -136,8 +136,8 @@ func TestHeadTracker_Get(t *testing.T) {
 func TestHeadTracker_Start_NewHeads(t *testing.T) {
 	t.Parallel()
 
-	store := estesting.NewStore(t)
-	config := estesting.NewConfig(t)
+	store := esTesting.NewStore(t)
+	config := esTesting.NewConfig(t)
 
 	ethClient := new(mocks.Client)
 	ethClient.On("ChainID", mock.Anything).Return(config.ChainID, nil)
@@ -163,8 +163,8 @@ func TestHeadTracker_CallsHeadTrackableCallbacks(t *testing.T) {
 	t.Parallel()
 	g := gomega.NewWithT(t)
 
-	store := estesting.NewStore(t)
-	config := estesting.NewConfig(t)
+	store := esTesting.NewStore(t)
+	config := esTesting.NewConfig(t)
 
 	sub := new(mocks.Subscription)
 	ethClient := new(mocks.Client)
@@ -176,13 +176,13 @@ func TestHeadTracker_CallsHeadTrackableCallbacks(t *testing.T) {
 			chchHeaders <- args.Get(1).(chan<- *models.Head)
 		}).
 		Return(sub, nil)
-	ethClient.On("HeaderByNumber", mock.Anything, mock.Anything).Return(estesting.Head(1), nil)
+	ethClient.On("HeaderByNumber", mock.Anything, mock.Anything).Return(esTesting.Head(1), nil)
 
 	sub.On("Unsubscribe").Return()
 	sub.On("Err").Return(nil)
 
-	checker := &estesting.MockHeadTrackable{}
-	ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{checker}, estesting.NeverSleeper{})
+	checker := &esTesting.MockHeadTrackable{}
+	ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{checker}, esTesting.NeverSleeper{})
 
 	assert.Nil(t, ht.Start())
 	g.Eventually(func() int32 { return checker.ConnectedCount() }).Should(gomega.Equal(int32(1)))
@@ -205,8 +205,8 @@ func TestHeadTracker_ReconnectOnError(t *testing.T) {
 	t.Parallel()
 	g := gomega.NewWithT(t)
 
-	store := estesting.NewStore(t)
-	config := estesting.NewConfig(t)
+	store := esTesting.NewStore(t)
+	config := esTesting.NewConfig(t)
 
 	ethClient := new(mocks.Client)
 	sub := new(mocks.Subscription)
@@ -218,8 +218,8 @@ func TestHeadTracker_ReconnectOnError(t *testing.T) {
 	sub.On("Unsubscribe").Return()
 	sub.On("Err").Return((<-chan error)(chErr))
 
-	checker := &estesting.MockHeadTrackable{}
-	ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{checker}, estesting.NeverSleeper{})
+	checker := &esTesting.MockHeadTrackable{}
+	ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{checker}, esTesting.NeverSleeper{})
 
 	// connect
 	assert.Nil(t, ht.Start())
@@ -242,8 +242,8 @@ func TestHeadTracker_StartConnectsFromLastSavedHeader(t *testing.T) {
 	t.Parallel()
 	g := gomega.NewWithT(t)
 
-	store := estesting.NewStore(t)
-	config := estesting.NewConfig(t)
+	store := esTesting.NewStore(t)
+	config := esTesting.NewConfig(t)
 
 	sub := new(mocks.Subscription)
 	ethClient := new(mocks.Client)
@@ -260,7 +260,7 @@ func TestHeadTracker_StartConnectsFromLastSavedHeader(t *testing.T) {
 		num := args.Get(1).(*big.Int)
 		head, exists := latestHeadByNumber[num.Int64()]
 		if !exists {
-			head = estesting.Head(num.Int64())
+			head = esTesting.Head(num.Int64())
 			latestHeadByNumber[num.Int64()] = head
 		}
 		fnCall.ReturnArguments = mock.Arguments{head, nil}
@@ -273,12 +273,12 @@ func TestHeadTracker_StartConnectsFromLastSavedHeader(t *testing.T) {
 	currentBN := big.NewInt(2)
 	var connectedValue atomic.Value
 
-	checker := &estesting.MockHeadTrackable{ConnectedCallback: func(bn *models.Head) {
+	checker := &esTesting.MockHeadTrackable{ConnectedCallback: func(bn *models.Head) {
 		connectedValue.Store(bn.ToInt())
 	}}
-	ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{checker}, estesting.NeverSleeper{})
+	ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{checker}, esTesting.NeverSleeper{})
 
-	require.NoError(t, ht.Save(models.NewHead(lastSavedBN, estesting.NewHash(), estesting.NewHash(), 0)))
+	require.NoError(t, ht.Save(models.NewHead(lastSavedBN, esTesting.NewHash(), esTesting.NewHash(), 0)))
 
 	assert.Nil(t, ht.Start())
 	headers := <-chchHeaders
@@ -301,8 +301,8 @@ func TestHeadTracker_StartConnectsFromLastSavedHeader(t *testing.T) {
 func TestHeadTracker_SwitchesToLongestChain(t *testing.T) {
 	t.Parallel()
 
-	store := estesting.NewStore(t)
-	config := estesting.NewConfig(t)
+	store := esTesting.NewStore(t)
+	config := esTesting.NewConfig(t)
 
 	// Need to set the buffer to something large since we inject a lot of heads at once and otherwise they will be dropped
 	config.HeadTrackerMaxBufferSize = 42
@@ -311,7 +311,7 @@ func TestHeadTracker_SwitchesToLongestChain(t *testing.T) {
 	ethClient := new(mocks.Client)
 
 	checker := new(mocks.HeadTrackable)
-	ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{checker}, estesting.NeverSleeper{})
+	ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{checker}, esTesting.NeverSleeper{})
 
 	chchHeaders := make(chan chan<- *models.Head, 1)
 	ethClient.On("ChainID", mock.Anything).Return(config.ChainID, nil)
@@ -333,22 +333,22 @@ func TestHeadTracker_SwitchesToLongestChain(t *testing.T) {
 	blockHeaders := []*models.Head{}
 
 	// First block comes in
-	blockHeaders = append(blockHeaders, &models.Head{Number: 1, Hash: estesting.NewHash(), ParentHash: estesting.NewHash(), Timestamp: time.Unix(1, 0)})
+	blockHeaders = append(blockHeaders, &models.Head{Number: 1, Hash: esTesting.NewHash(), ParentHash: esTesting.NewHash(), Timestamp: time.Unix(1, 0)})
 	// Blocks 2 and 3 are out of order
-	head2 := &models.Head{Number: 2, Hash: estesting.NewHash(), ParentHash: blockHeaders[0].Hash, Timestamp: time.Unix(2, 0)}
-	head3 := &models.Head{Number: 3, Hash: estesting.NewHash(), ParentHash: head2.Hash, Timestamp: time.Unix(3, 0)}
+	head2 := &models.Head{Number: 2, Hash: esTesting.NewHash(), ParentHash: blockHeaders[0].Hash, Timestamp: time.Unix(2, 0)}
+	head3 := &models.Head{Number: 3, Hash: esTesting.NewHash(), ParentHash: head2.Hash, Timestamp: time.Unix(3, 0)}
 	blockHeaders = append(blockHeaders, head3)
 	blockHeaders = append(blockHeaders, head2)
 	// Block 4 comes in
-	blockHeaders = append(blockHeaders, &models.Head{Number: 4, Hash: estesting.NewHash(), ParentHash: blockHeaders[1].Hash, Timestamp: time.Unix(4, 0)})
+	blockHeaders = append(blockHeaders, &models.Head{Number: 4, Hash: esTesting.NewHash(), ParentHash: blockHeaders[1].Hash, Timestamp: time.Unix(4, 0)})
 	// Another block at level 4 comes in, that will be uncled
-	blockHeaders = append(blockHeaders, &models.Head{Number: 4, Hash: estesting.NewHash(), ParentHash: blockHeaders[1].Hash, Timestamp: time.Unix(5, 0)})
+	blockHeaders = append(blockHeaders, &models.Head{Number: 4, Hash: esTesting.NewHash(), ParentHash: blockHeaders[1].Hash, Timestamp: time.Unix(5, 0)})
 	// Reorg happened forking from block 2
-	blockHeaders = append(blockHeaders, &models.Head{Number: 2, Hash: estesting.NewHash(), ParentHash: blockHeaders[0].Hash, Timestamp: time.Unix(6, 0)})
-	blockHeaders = append(blockHeaders, &models.Head{Number: 3, Hash: estesting.NewHash(), ParentHash: blockHeaders[5].Hash, Timestamp: time.Unix(7, 0)})
-	blockHeaders = append(blockHeaders, &models.Head{Number: 4, Hash: estesting.NewHash(), ParentHash: blockHeaders[6].Hash, Timestamp: time.Unix(8, 0)})
+	blockHeaders = append(blockHeaders, &models.Head{Number: 2, Hash: esTesting.NewHash(), ParentHash: blockHeaders[0].Hash, Timestamp: time.Unix(6, 0)})
+	blockHeaders = append(blockHeaders, &models.Head{Number: 3, Hash: esTesting.NewHash(), ParentHash: blockHeaders[5].Hash, Timestamp: time.Unix(7, 0)})
+	blockHeaders = append(blockHeaders, &models.Head{Number: 4, Hash: esTesting.NewHash(), ParentHash: blockHeaders[6].Hash, Timestamp: time.Unix(8, 0)})
 	// Now the new chain is longer
-	blockHeaders = append(blockHeaders, &models.Head{Number: 5, Hash: estesting.NewHash(), ParentHash: blockHeaders[7].Hash, Timestamp: time.Unix(9, 0)})
+	blockHeaders = append(blockHeaders, &models.Head{Number: 5, Hash: esTesting.NewHash(), ParentHash: blockHeaders[7].Hash, Timestamp: time.Unix(9, 0)})
 
 	checker.On("OnNewLongestChain", mock.Anything, mock.MatchedBy(func(h models.Head) bool {
 		return h.Number == 1 && h.Hash == blockHeaders[0].Hash
@@ -402,7 +402,7 @@ func TestHeadTracker_SwitchesToLongestChain(t *testing.T) {
 		num := args.Get(1).(*big.Int)
 		head, exists := latestHeadByNumber[num.Uint64()]
 		if !exists {
-			head = estesting.Head(num.Int64())
+			head = esTesting.Head(num.Int64())
 			latestHeadByNumber[num.Uint64()] = head
 		}
 		fnCall.ReturnArguments = mock.Arguments{head, nil}
@@ -450,19 +450,19 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 		ParentHash: gethCommon.BigToHash(big.NewInt(0)),
 		Time:       now,
 	}
-	head0 := models.NewHead(gethHead0.Number, estesting.NewHash(), gethHead0.ParentHash, gethHead0.Time)
+	head0 := models.NewHead(gethHead0.Number, esTesting.NewHash(), gethHead0.ParentHash, gethHead0.Time)
 
-	h1 := *estesting.Head(1)
+	h1 := *esTesting.Head(1)
 	h1.ParentHash = head0.Hash
 
 	gethHead8 := &gethTypes.Header{
 		Number:     big.NewInt(8),
-		ParentHash: estesting.NewHash(),
+		ParentHash: esTesting.NewHash(),
 		Time:       now,
 	}
-	head8 := models.NewHead(gethHead8.Number, estesting.NewHash(), gethHead8.ParentHash, gethHead8.Time)
+	head8 := models.NewHead(gethHead8.Number, esTesting.NewHash(), gethHead8.ParentHash, gethHead8.Time)
 
-	h9 := *estesting.Head(9)
+	h9 := *esTesting.Head(9)
 	h9.ParentHash = head8.Hash
 
 	gethHead10 := &gethTypes.Header{
@@ -470,24 +470,24 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 		ParentHash: h9.Hash,
 		Time:       now,
 	}
-	head10 := models.NewHead(gethHead10.Number, estesting.NewHash(), gethHead10.ParentHash, gethHead10.Time)
+	head10 := models.NewHead(gethHead10.Number, esTesting.NewHash(), gethHead10.ParentHash, gethHead10.Time)
 
-	h11 := *estesting.Head(11)
+	h11 := *esTesting.Head(11)
 	h11.ParentHash = head10.Hash
 
-	h12 := *estesting.Head(12)
+	h12 := *esTesting.Head(12)
 	h12.ParentHash = h11.Hash
 
-	h13 := *estesting.Head(13)
+	h13 := *esTesting.Head(13)
 	h13.ParentHash = h12.Hash
 
-	h14Orphaned := *estesting.Head(14)
+	h14Orphaned := *esTesting.Head(14)
 	h14Orphaned.ParentHash = h13.Hash
 
-	h14 := *estesting.Head(14)
+	h14 := *esTesting.Head(14)
 	h14.ParentHash = h13.Hash
 
-	h15 := *estesting.Head(15)
+	h15 := *esTesting.Head(15)
 	h15.ParentHash = h14.Hash
 
 	heads := []models.Head{
@@ -503,8 +503,8 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("returns chain if all the heads are in database", func(t *testing.T) {
-		store := estesting.NewStore(t)
-		config := estesting.NewConfig(t)
+		store := esTesting.NewStore(t)
+		config := esTesting.NewConfig(t)
 
 		for _, h := range heads {
 			require.NoError(t, store.InsertHead(h))
@@ -516,7 +516,7 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 		ethClient.On("SubscribeNewHead", mock.Anything, mock.Anything).Return(sub, nil)
 		sub.On("Err").Return(nil)
 
-		ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{}, estesting.NeverSleeper{})
+		ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{}, esTesting.NeverSleeper{})
 
 		h, err := ht.GetChainWithBackfill(ctx, h12, 2)
 		require.NoError(t, err)
@@ -528,8 +528,8 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 	})
 
 	t.Run("fetches a missing head", func(t *testing.T) {
-		store := estesting.NewStore(t)
-		config := estesting.NewConfig(t)
+		store := esTesting.NewStore(t)
+		config := esTesting.NewConfig(t)
 
 		for _, h := range heads {
 			require.NoError(t, store.InsertHead(h))
@@ -540,7 +540,7 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 		ethClient.On("HeaderByNumber", mock.Anything, big.NewInt(10)).
 			Return(&head10, nil)
 
-		ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{}, estesting.NeverSleeper{})
+		ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{}, esTesting.NeverSleeper{})
 
 		h, err := ht.GetChainWithBackfill(ctx, h12, 3)
 		require.NoError(t, err)
@@ -560,8 +560,8 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 	})
 
 	t.Run("fetches only heads that are missing", func(t *testing.T) {
-		store := estesting.NewStore(t)
-		config := estesting.NewConfig(t)
+		store := esTesting.NewStore(t)
+		config := esTesting.NewConfig(t)
 
 		for _, h := range heads {
 			require.NoError(t, store.InsertHead(h))
@@ -569,7 +569,7 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 
 		ethClient := new(mocks.Client)
 
-		ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{}, estesting.NeverSleeper{})
+		ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{}, esTesting.NeverSleeper{})
 
 		ethClient.On("HeaderByNumber", mock.Anything, big.NewInt(10)).
 			Return(&head10, nil)
@@ -589,26 +589,26 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 	})
 
 	t.Run("returns error if first head is not in database", func(t *testing.T) {
-		store := estesting.NewStore(t)
-		config := estesting.NewConfig(t)
+		store := esTesting.NewStore(t)
+		config := esTesting.NewConfig(t)
 
 		ethClient := new(mocks.Client)
 		sub := new(mocks.Subscription)
 		ethClient.On("ChainID", mock.Anything).Return(config.ChainID)
 		ethClient.On("SubscribeNewHead", mock.Anything, mock.Anything).Return(sub, nil)
 
-		ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{}, estesting.NeverSleeper{})
+		ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{}, esTesting.NeverSleeper{})
 
-		h16 := *estesting.Head(16)
+		h16 := *esTesting.Head(16)
 		h16.ParentHash = h15.Hash
 
 		_, err := ht.GetChainWithBackfill(ctx, h16, 3)
-		require.Contains(t, err.Error(), esstore.ErrNotFound.Error())
+		require.Contains(t, err.Error(), esStore.ErrNotFound.Error())
 	})
 
 	t.Run("does not backfill if chain length is already greater than or equal to depth", func(t *testing.T) {
-		store := estesting.NewStore(t)
-		config := estesting.NewConfig(t)
+		store := esTesting.NewStore(t)
+		config := esTesting.NewConfig(t)
 
 		for _, h := range heads {
 			require.NoError(t, store.InsertHead(h))
@@ -619,7 +619,7 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 		ethClient.On("ChainID", mock.Anything).Return(config.ChainID)
 		ethClient.On("SubscribeNewHead", mock.Anything, mock.Anything).Return(sub, nil)
 
-		ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{}, estesting.NeverSleeper{})
+		ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{}, esTesting.NeverSleeper{})
 
 		h, err := ht.GetChainWithBackfill(ctx, h15, 3)
 		require.NoError(t, err)
@@ -631,14 +631,14 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 	})
 
 	t.Run("only backfills to height 0 if chain length would otherwise cause it to try and fetch a negative head", func(t *testing.T) {
-		store := estesting.NewStore(t)
-		config := estesting.NewConfig(t)
+		store := esTesting.NewStore(t)
+		config := esTesting.NewConfig(t)
 
 		ethClient := new(mocks.Client)
 		ethClient.On("HeaderByNumber", mock.Anything, big.NewInt(0)).
 			Return(&head0, nil)
 
-		ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{}, estesting.NeverSleeper{})
+		ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{}, esTesting.NeverSleeper{})
 
 		require.NoError(t, store.InsertHead(h1))
 
@@ -651,8 +651,8 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 	})
 
 	t.Run("abandons backfill and returns whatever we have if the eth node returns not found", func(t *testing.T) {
-		store := estesting.NewStore(t)
-		config := estesting.NewConfig(t)
+		store := esTesting.NewStore(t)
+		config := esTesting.NewConfig(t)
 
 		for _, h := range heads {
 			require.NoError(t, store.InsertHead(h))
@@ -666,7 +666,7 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 			Return(nil, ethereum.NotFound).
 			Once()
 
-		ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{}, estesting.NeverSleeper{})
+		ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{}, esTesting.NeverSleeper{})
 
 		h, err := ht.GetChainWithBackfill(ctx, h12, 400)
 		require.NoError(t, err)
@@ -679,8 +679,8 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 	})
 
 	t.Run("abandons backfill and returns whatever we have if the context time budget is exceeded", func(t *testing.T) {
-		store := estesting.NewStore(t)
-		config := estesting.NewConfig(t)
+		store := esTesting.NewStore(t)
+		config := esTesting.NewConfig(t)
 
 		for _, h := range heads {
 			require.NoError(t, store.InsertHead(h))
@@ -692,7 +692,7 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 		ethClient.On("HeaderByNumber", mock.Anything, big.NewInt(8)).
 			Return(nil, context.DeadlineExceeded)
 
-		ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{}, estesting.NeverSleeper{})
+		ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{}, esTesting.NeverSleeper{})
 
 		h, err := ht.GetChainWithBackfill(ctx, h12, 400)
 		require.NoError(t, err)
@@ -728,8 +728,8 @@ func TestHeadTracker_RingBuffer(t *testing.T) {
 		t.Parallel()
 		bufferSize := 3
 
-		store := estesting.NewStore(t)
-		config := estesting.NewConfig(t)
+		store := esTesting.NewStore(t)
+		config := esTesting.NewConfig(t)
 
 		config.HeadTrackerMaxBufferSize = bufferSize
 		config.HeadTrackerHistoryDepth = 50
@@ -745,7 +745,7 @@ func TestHeadTracker_RingBuffer(t *testing.T) {
 			}).
 			Return(sub, nil)
 		// We don't care about this since we're not testing backfilling, just return anything
-		ethClient.On("HeaderByNumber", mock.Anything, mock.Anything).Return(estesting.Head(42), nil)
+		ethClient.On("HeaderByNumber", mock.Anything, mock.Anything).Return(esTesting.Head(42), nil)
 
 		sub.On("Unsubscribe").Return()
 		sub.On("Err").Return(nil)
@@ -756,13 +756,13 @@ func TestHeadTracker_RingBuffer(t *testing.T) {
 			called: called,
 			resume: resume,
 		}
-		ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{cb}, estesting.NeverSleeper{})
+		ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{cb}, esTesting.NeverSleeper{})
 		require.NoError(t, ht.Start())
 		headers := <-chchHeaders
 
 		// Fill up the buffer first
 		for i := 0; i < bufferSize; i++ {
-			headers <- &models.Head{Number: uint64(i), Hash: estesting.NewHash()}
+			headers <- &models.Head{Number: uint64(i), Hash: esTesting.NewHash()}
 		}
 		// Now we have heads 0, 1, 2 in buffer. Wait for callback to block on head 0
 		h := <-cb.called
@@ -770,9 +770,9 @@ func TestHeadTracker_RingBuffer(t *testing.T) {
 
 		// Head 0 has been pulled off. Callback is blocking on head 0.
 		// Buffer: 1, 2
-		headers <- &models.Head{Number: 3, Hash: estesting.NewHash()}
+		headers <- &models.Head{Number: 3, Hash: esTesting.NewHash()}
 		// Buffer: 1, 2, 3
-		headers <- &models.Head{Number: 4, Hash: estesting.NewHash()}
+		headers <- &models.Head{Number: 4, Hash: esTesting.NewHash()}
 		// Buffer: 2, 3, 4 (dropped head 1)
 
 		// Resume the headtracker callback

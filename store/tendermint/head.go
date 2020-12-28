@@ -1,7 +1,7 @@
 package tendermint
 
 import (
-	esstore "github.com/celer-network/eth-services/store"
+	esStore "github.com/celer-network/eth-services/store"
 	"github.com/celer-network/eth-services/store/models"
 	"github.com/ethereum/go-ethereum/common"
 
@@ -10,7 +10,8 @@ import (
 )
 
 var (
-	prefixHead  = []byte("hd")
+	prefixHead = []byte("hd")
+
 	keyLastHead = []byte("lhd")
 )
 
@@ -35,7 +36,7 @@ func (store *TMStore) LastHead() (*models.Head, error) {
 	var lastHead models.Head
 	err := get(store.nsHead, keyLastHead, &lastHead)
 	if err != nil {
-		if errors.Is(err, esstore.ErrNotFound) {
+		if errors.Is(err, esStore.ErrNotFound) {
 			return nil, nil
 		}
 		return nil, errors.Wrap(err, "could not get last head")
@@ -50,17 +51,26 @@ func (store *TMStore) FirstHead() (*models.Head, error) {
 		return nil, errors.Wrap(err, "could not create iterator")
 	}
 	var firstHead *models.Head = nil
+	var iterError error
 	for iter.Valid() {
 		value := iter.Value()
 		var head models.Head
 		unmarshalErr := msgpack.Unmarshal(value, &head)
 		if unmarshalErr != nil {
-			return nil, errors.Wrap(err, "could not decode head")
+			iterError = errors.Wrap(err, "could not decode head")
+			break
 		}
 		if firstHead == nil || head.Number < firstHead.Number {
 			firstHead = &head
 		}
 		iter.Next()
+	}
+	err = iter.Close()
+	if err != nil {
+		return nil, errors.Wrap(err, "could not close iterator")
+	}
+	if iterError != nil {
+		return nil, iterError
 	}
 	return firstHead, nil
 }
@@ -70,7 +80,7 @@ func (store *TMStore) HeadByHash(hash common.Hash) (*models.Head, error) {
 	var head models.Head
 	err := get(store.nsHead, hash.Bytes(), &head)
 	if err != nil {
-		if errors.Is(err, esstore.ErrNotFound) {
+		if errors.Is(err, esStore.ErrNotFound) {
 			return nil, nil
 		}
 		return nil, errors.Wrap(err, "could not get head")
@@ -90,17 +100,26 @@ func (store *TMStore) TrimOldHeads(depth uint64) error {
 		return errors.Wrap(err, "could not create iterator")
 	}
 	toTrim := make([][]byte, 0)
+	var iterError error
 	for iter.Valid() {
 		value := iter.Value()
 		var head models.Head
 		unmarshalErr := msgpack.Unmarshal(value, &head)
 		if unmarshalErr != nil {
-			return errors.Wrap(err, "could not decode head")
+			iterError = errors.Wrap(err, "could not decode head")
+			break
 		}
 		if highestNumber-head.Number >= depth {
 			toTrim = append(toTrim, head.Hash.Bytes())
 		}
 		iter.Next()
+	}
+	err = iter.Close()
+	if err != nil {
+		return errors.Wrap(err, "could not close iterator")
+	}
+	if iterError != nil {
+		return iterError
 	}
 	for _, key := range toTrim {
 		deleteErr := store.nsHead.Delete(key)
@@ -134,7 +153,7 @@ func (store *TMStore) Chain(hash common.Hash, lookback uint64) (models.Head, err
 		currHash = prevHead.ParentHash
 	}
 	if firstHead == nil {
-		return models.Head{}, esstore.ErrNotFound
+		return models.Head{}, esStore.ErrNotFound
 	}
 	return *firstHead, nil
 }

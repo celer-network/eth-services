@@ -12,6 +12,7 @@ var (
 	ErrNotFound = errors.New("value not found")
 )
 
+// Store defines the interface for the storage layer
 type Store interface {
 	// InsertHead inserts a block head
 	InsertHead(head models.Head) error
@@ -32,11 +33,32 @@ type Store interface {
 	// Chain returns the chain of heads starting at hash and up to lookback parents.
 	Chain(hash common.Hash, lookback uint64) (models.Head, error)
 
-	InsertEthTask(
-		taskRunID uuid.UUID,
+	// GetAccounts gets the list of accounts
+	GetAccounts() ([]*models.Account, error)
+
+	GetAccount(address common.Address) (*models.Account, error)
+
+	PutAccount(account *models.Account) error
+
+	AddTx(
+		txID uuid.UUID,
 		fromAddress common.Address,
 		toAddress common.Address,
 		encodedPayload []byte,
 		gasLimit uint64,
 	) error
+
+	GetOneInProgressTx(fromAddress common.Address) (*models.Tx, error)
+
+	GetTx(fromAddress common.Address, id uuid.UUID) (*models.Tx, error)
+
+	GetTxs(fromAddress common.Address) ([]*models.Tx, error)
+
+	PutTx(tx *models.Tx) error
+
+	GetNextNonce(address common.Address) (int64, error)
+
+	SetNextNonce(address common.Address, nextNonce int64) error
+
+	GetNextUnstartedTx(fromAddress common.Address) (*models.Tx, error)
 }

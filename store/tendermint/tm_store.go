@@ -9,9 +9,9 @@ import (
 
 // TMStore is a Store implementation using Tendermint tm-db
 type TMStore struct {
-	nsHead *tmdb.PrefixDB
-	nsTask *tmdb.PrefixDB
-	nsTx   *tmdb.PrefixDB
+	nsHead    *tmdb.PrefixDB
+	nsAccount *tmdb.PrefixDB
+	nsTx      *tmdb.PrefixDB
 }
 
 var _ store.Store = (*TMStore)(nil)
@@ -19,9 +19,9 @@ var _ store.Store = (*TMStore)(nil)
 // NewTMStore creates a new TMStore
 func NewTMStore(db tmdb.DB) *TMStore {
 	return &TMStore{
-		nsHead: tmdb.NewPrefixDB(db, prefixHead),
-		nsTask: tmdb.NewPrefixDB(db, prefixEthTask),
-		nsTx:   tmdb.NewPrefixDB(db, prefixEthTx),
+		nsHead:    tmdb.NewPrefixDB(db, prefixHead),
+		nsAccount: tmdb.NewPrefixDB(db, prefixAccount),
+		nsTx:      tmdb.NewPrefixDB(db, prefixTx),
 	}
 }
 

@@ -17,5 +17,11 @@ type Config struct {
 	HeadTrackerMaxBufferSize int
 	FinalityDepth            uint64
 
-	DefaultGasPrice uint64
+	DBPollInterval time.Duration
+
+	KeysDir         string
+	DefaultGasPrice *big.Int
+	MaxGasPrice     *big.Int
+	GasBumpPercent  uint64
+	GasBumpWei      *big.Int
 }

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-
 	uuid "github.com/satori/go.uuid"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -17,78 +16,68 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 )
 
-type EthTxState string
-type EthTxAttemptState string
+type TxState string
+type TxAttemptState string
 
 const (
-	EthTxUnstarted               = EthTxState("unstarted")
-	EthTxInProgress              = EthTxState("in_progress")
-	EthTxFatalError              = EthTxState("fatal_error")
-	EthTxUnconfirmed             = EthTxState("unconfirmed")
-	EthTxConfirmed               = EthTxState("confirmed")
-	EthTxConfirmedMissingReceipt = EthTxState("confirmed_missing_receipt")
+	TxStateUnstarted               = TxState("unstarted")
+	TxStateInProgress              = TxState("in_progress")
+	TxStateFatalError              = TxState("fatal_error")
+	TxStateUnconfirmed             = TxState("unconfirmed")
+	TxStateConfirmed               = TxState("confirmed")
+	TxStateConfirmedMissingReceipt = TxState("confirmed_missing_receipt")
 
-	EthTxAttemptInProgress      = EthTxAttemptState("in_progress")
-	EthTxAttemptInsufficientEth = EthTxAttemptState("insufficient_eth")
-	EthTxAttemptBroadcast       = EthTxAttemptState("broadcast")
+	TxAttemptStateInProgress      = TxAttemptState("in_progress")
+	TxAttemptStateInsufficientEth = TxAttemptState("insufficient_eth")
+	TxAttemptStateBroadcast       = TxAttemptState("broadcast")
 )
 
 type Account struct {
-	ID      int64
 	Address common.Address
+	KeyJSON []byte
 	// This is the nonce that should be used for the next transaction.
 	// Conceptually equivalent to geth's `PendingNonceAt` but more reliable
 	// because we have a better view of our own transactions
-	NextNonce *int64
+	NextNonce int64
 }
 
-type EthTask struct {
-	TaskID  uuid.UUID
-	EthTxID int64
-	EthTx   EthTx
-}
-
-type EthTx struct {
-	ID             int64
-	Nonce          *int64
+type Tx struct {
+	ID             uuid.UUID
+	Nonce          int64
 	FromAddress    common.Address
 	ToAddress      common.Address
 	EncodedPayload []byte
-	Value          *big.Int
+	Value          big.Int
 	GasLimit       uint64
-	Error          *string
-	BroadcastAt    *time.Time
-	CreatedAt      time.Time
-	State          EthTxState
-	EthTxAttempts  []EthTxAttempt
+	State          TxState
+	Error          string
+	TxAttempts     []TxAttempt
 }
 
-func (e EthTx) GetError() error {
-	if e.Error == nil {
+func (e Tx) GetError() error {
+	if e.Error == "" {
 		return nil
 	}
-	return errors.New(*e.Error)
+	return errors.New(e.Error)
 }
 
-// GetID allows EthTx to be used as jsonapi.MarshalIdentifier
-func (e EthTx) GetID() string {
+// GetID allows Tx to be used as jsonapi.MarshalIdentifier
+func (e Tx) GetID() string {
 	return fmt.Sprintf("%d", e.ID)
 }
 
-type EthTxAttempt struct {
-	ID                      int64
-	EthTxID                 int64
-	EthTx                   EthTx
+type TxAttempt struct {
+	ID                      uuid.UUID
+	TxID                    uuid.UUID
 	GasPrice                *big.Int
 	SignedRawTx             []byte
 	Hash                    common.Hash
 	BroadcastBeforeBlockNum *int64
-	State                   EthTxAttemptState
-	EthReceipts             []EthReceipt
+	State                   TxAttemptState
+	Receipts                []Receipt
 }
 
-type EthReceipt struct {
-	ID               int64
+type Receipt struct {
 	TxHash           common.Hash
 	BlockHash        common.Hash
 	BlockNumber      int64
@@ -97,7 +86,7 @@ type EthReceipt struct {
 }
 
 // GetSignedTx decodes the SignedRawTx into a types.Transaction struct
-func (a EthTxAttempt) GetSignedTx() (*types.Transaction, error) {
+func (a TxAttempt) GetSignedTx() (*types.Transaction, error) {
 	s := rlp.NewStream(bytes.NewReader(a.SignedRawTx), 0)
 	signedTx := new(types.Transaction)
 	if err := signedTx.DecodeRLP(s); err != nil {
