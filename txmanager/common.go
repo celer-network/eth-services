@@ -24,10 +24,6 @@ const (
 	maxEthNodeRequestTime = 15 * time.Second
 )
 
-var (
-	ZeroAddress = gethCommon.Address{}
-)
-
 func newAttempt(keyStore client.KeyStoreInterface, config *types.Config, tx *models.Tx, gasPrice *big.Int) (*models.TxAttempt, error) {
 	attempt := models.TxAttempt{}
 	account, err := keyStore.GetAccountByAddress(tx.FromAddress)
@@ -45,7 +41,7 @@ func newAttempt(keyStore client.KeyStoreInterface, config *types.Config, tx *mod
 	attempt.State = models.TxAttemptStateInProgress
 	attempt.SignedRawTx = signedTxBytes
 	attempt.TxID = tx.ID
-	attempt.GasPrice = gasPrice
+	attempt.GasPrice = *gasPrice
 	attempt.Hash = hash
 
 	return &attempt, nil
@@ -90,33 +86,6 @@ func sendTransaction(ctx context.Context, ethClient client.Client, attempt *mode
 	return client.NewSendError(err)
 }
 
-// sendEmptyTransaction sends a transaction with 0 Eth and an empty payload to the burn address
-// May be useful for clearing stuck nonces
-func sendEmptyTransaction(
-	ethClient client.Client,
-	keyStore client.KeyStoreInterface,
-	nonce uint64,
-	gasLimit uint64,
-	gasPriceWei *big.Int,
-	account gethAccounts.Account,
-	chainID *big.Int,
-) (_ *gethTypes.Transaction, err error) {
-	defer WrapIfError(&err, "sendEmptyTransaction failed")
-
-	to := ZeroAddress
-	value := big.NewInt(0)
-	payload := []byte{}
-	tx := gethTypes.NewTransaction(nonce, to, value, gasLimit, gasPriceWei, payload)
-	signedTx, err := keyStore.SignTx(account, tx, chainID)
-	if err != nil {
-		return signedTx, err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), maxEthNodeRequestTime)
-	defer cancel()
-	err = ethClient.SendTransaction(ctx, signedTx)
-	return signedTx, err
-}
-
 func saveReplacementInProgressAttempt(store esStore.Store, tx *models.Tx, oldAttempt *models.TxAttempt, replacementAttempt *models.TxAttempt) error {
 	if oldAttempt.State != models.TxAttemptStateInProgress || replacementAttempt.State != models.TxAttemptStateInProgress {
 		return errors.New("expected attempts to be in_progress")
@@ -127,10 +96,11 @@ func saveReplacementInProgressAttempt(store esStore.Store, tx *models.Tx, oldAtt
 
 	var newAttempts []models.TxAttempt
 	for _, attempt := range tx.TxAttempts {
-		if attempt.ID != oldAttempt.ID {
+		if !uuid.Equal(attempt.ID, oldAttempt.ID) {
 			newAttempts = append(newAttempts, attempt)
 		}
 	}
+
 	newAttempts = append(newAttempts, *replacementAttempt)
 	tx.TxAttempts = newAttempts
 	err := store.PutTx(tx)

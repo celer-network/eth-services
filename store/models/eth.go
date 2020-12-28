@@ -69,10 +69,10 @@ func (e Tx) GetID() string {
 type TxAttempt struct {
 	ID                      uuid.UUID
 	TxID                    uuid.UUID
-	GasPrice                *big.Int
+	GasPrice                big.Int
 	SignedRawTx             []byte
 	Hash                    common.Hash
-	BroadcastBeforeBlockNum *int64
+	BroadcastBeforeBlockNum int64
 	State                   TxAttemptState
 	Receipts                []Receipt
 }
@@ -98,7 +98,7 @@ func (a TxAttempt) GetSignedTx() (*types.Transaction, error) {
 // Head represents a BlockNumber, BlockHash.
 type Head struct {
 	Hash       common.Hash
-	Number     uint64
+	Number     int64
 	ParentHash common.Hash
 	Timestamp  time.Time
 
@@ -108,7 +108,7 @@ type Head struct {
 // NewHead returns a Head instance.
 func NewHead(number *big.Int, blockHash common.Hash, parentHash common.Hash, timestamp uint64) Head {
 	return Head{
-		Number:     number.Uint64(),
+		Number:     number.Int64(),
 		Hash:       blockHash,
 		ParentHash: parentHash,
 		Timestamp:  time.Unix(int64(timestamp), 0),
@@ -128,8 +128,8 @@ func (h Head) EarliestInChain() Head {
 }
 
 // ChainLength returns the length of the chain followed by recursively looking up parents
-func (h Head) ChainLength() uint64 {
-	l := uint64(1)
+func (h Head) ChainLength() int64 {
+	l := int64(1)
 
 	for {
 		if h.Parent != nil {
@@ -152,7 +152,7 @@ func (h *Head) ToInt() *big.Int {
 	if h == nil {
 		return nil
 	}
-	return new(big.Int).SetUint64(h.Number)
+	return new(big.Int).SetInt64(h.Number)
 }
 
 // GreaterThan compares BlockNumbers and returns true if the receiver BlockNumber is greater than
@@ -195,7 +195,7 @@ func (h *Head) UnmarshalJSON(bs []byte) error {
 	}
 
 	h.Hash = jsonHead.Hash
-	h.Number = (*big.Int)(jsonHead.Number).Uint64()
+	h.Number = (*big.Int)(jsonHead.Number).Int64()
 	h.ParentHash = jsonHead.ParentHash
 	h.Timestamp = time.Unix(int64(jsonHead.Timestamp), 0).UTC()
 	return nil

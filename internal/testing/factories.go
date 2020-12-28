@@ -114,7 +114,7 @@ func MustInsertConfirmedEthTxWithAttempt(t *testing.T, store esStore.Store, nonc
 	tx.Nonce = nonce
 	tx.State = models.TxStateConfirmed
 	attempt := NewTxAttempt(t, tx.ID)
-	attempt.BroadcastBeforeBlockNum = &broadcastBeforeBlockNum
+	attempt.BroadcastBeforeBlockNum = broadcastBeforeBlockNum
 	attempt.State = models.TxAttemptStateBroadcast
 	tx.TxAttempts = append(tx.TxAttempts, *attempt)
 
@@ -146,7 +146,7 @@ func NewTxAttempt(t *testing.T, txID uuid.UUID) *models.TxAttempt {
 	gasPrice := big.NewInt(1)
 	return &models.TxAttempt{
 		TxID:     txID,
-		GasPrice: gasPrice,
+		GasPrice: *gasPrice,
 		// Just a random signed raw tx that decodes correctly
 		// Ignore all actual values
 		SignedRawTx: hexutil.MustDecode("0xf889808504a817c8008307a12094000000000000000000000000000000000000000080a400000000000000000000000000000000000000000000000000000000000000000000000025a0838fe165906e2547b9a052c099df08ec891813fea4fcdb3c555362285eb399c5a070db99322490eb8a0f2270be6eca6e3aedbc49ff57ef939cf2774f12d08aa85e"),

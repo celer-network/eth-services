@@ -7,6 +7,11 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 )
 
+const (
+	errStrCreateIter = "could not create iterator"
+	errStrCloseIter  = "could not close iterator"
+)
+
 // TMStore is a Store implementation using Tendermint tm-db
 type TMStore struct {
 	nsHead    *tmdb.PrefixDB
@@ -62,4 +67,12 @@ func concatKeys(parts ...[]byte) []byte {
 		res = append(res, p...)
 	}
 	return res
+}
+
+func toCreateIterError(err error) error {
+	return errors.Wrap(err, errStrCreateIter)
+}
+
+func toCloseIterError(err error) error {
+	return errors.Wrap(err, errStrCloseIter)
 }

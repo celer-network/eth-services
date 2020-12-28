@@ -73,7 +73,7 @@ func TestHeadTracker_Save_InsertsAndTrims(t *testing.T) {
 
 	lastHead, err := store.LastHead()
 	require.NoError(t, err)
-	assert.Equal(t, uint64(200), lastHead.Number)
+	assert.Equal(t, int64(200), lastHead.Number)
 }
 
 func TestHeadTracker_Get(t *testing.T) {
@@ -282,7 +282,7 @@ func TestHeadTracker_StartConnectsFromLastSavedHeader(t *testing.T) {
 
 	assert.Nil(t, ht.Start())
 	headers := <-chchHeaders
-	headers <- &models.Head{Number: currentBN.Uint64()}
+	headers <- &models.Head{Number: currentBN.Int64()}
 	g.Eventually(func() int32 { return checker.ConnectedCount() }).Should(gomega.Equal(int32(1)))
 
 	connectedBN := connectedValue.Load().(*big.Int)
@@ -295,7 +295,7 @@ func TestHeadTracker_StartConnectsFromLastSavedHeader(t *testing.T) {
 	// Check that it saved the head
 	h, err := store.LastHead()
 	require.NoError(t, err)
-	assert.Equal(t, h.Number, currentBN.Uint64())
+	assert.Equal(t, h.Number, currentBN.Int64())
 }
 
 func TestHeadTracker_SwitchesToLongestChain(t *testing.T) {
@@ -392,7 +392,7 @@ func TestHeadTracker_SwitchesToLongestChain(t *testing.T) {
 
 	// This grotesque construction is the only way to do dynamic return values using
 	// the mock package.  We need dynamic returns because we're simulating reorgs.
-	latestHeadByNumber := make(map[uint64]*models.Head)
+	latestHeadByNumber := make(map[int64]*models.Head)
 	latestHeadByNumberMu := new(sync.Mutex)
 
 	fnCall := ethClient.On("HeaderByNumber", mock.Anything, mock.Anything)
@@ -400,10 +400,10 @@ func TestHeadTracker_SwitchesToLongestChain(t *testing.T) {
 		latestHeadByNumberMu.Lock()
 		defer latestHeadByNumberMu.Unlock()
 		num := args.Get(1).(*big.Int)
-		head, exists := latestHeadByNumber[num.Uint64()]
+		head, exists := latestHeadByNumber[num.Int64()]
 		if !exists {
 			head = esTesting.Head(num.Int64())
-			latestHeadByNumber[num.Uint64()] = head
+			latestHeadByNumber[num.Int64()] = head
 		}
 		fnCall.ReturnArguments = mock.Arguments{head, nil}
 	}
@@ -416,7 +416,7 @@ func TestHeadTracker_SwitchesToLongestChain(t *testing.T) {
 
 	gomega.NewWithT(t).Eventually(lastHead).Should(gomega.BeClosed())
 	require.NoError(t, ht.Stop())
-	assert.Equal(t, uint64(5), ht.HighestSeenHead().Number)
+	assert.Equal(t, int64(5), ht.HighestSeenHead().Number)
 
 	for _, h := range blockHeaders {
 		c, err := store.Chain(h.Hash, 1)
@@ -521,9 +521,9 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 		h, err := ht.GetChainWithBackfill(ctx, h12, 2)
 		require.NoError(t, err)
 
-		assert.Equal(t, uint64(12), h.Number)
+		assert.Equal(t, int64(12), h.Number)
 		require.NotNil(t, h.Parent)
-		assert.Equal(t, uint64(11), h.Parent.Number)
+		assert.Equal(t, int64(11), h.Parent.Number)
 		require.Nil(t, h.Parent.Parent)
 	})
 
@@ -545,16 +545,16 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 		h, err := ht.GetChainWithBackfill(ctx, h12, 3)
 		require.NoError(t, err)
 
-		assert.Equal(t, uint64(12), h.Number)
+		assert.Equal(t, int64(12), h.Number)
 		require.NotNil(t, h.Parent)
-		assert.Equal(t, uint64(11), h.Parent.Number)
+		assert.Equal(t, int64(11), h.Parent.Number)
 		require.NotNil(t, h.Parent)
-		assert.Equal(t, uint64(10), h.Parent.Parent.Number)
+		assert.Equal(t, int64(10), h.Parent.Parent.Number)
 		require.Nil(t, h.Parent.Parent.Parent)
 
 		writtenHead, err := store.HeadByHash(head10.Hash)
 		require.NoError(t, err)
-		assert.Equal(t, uint64(10), writtenHead.Number)
+		assert.Equal(t, int64(10), writtenHead.Number)
 
 		ethClient.AssertExpectations(t)
 	})
@@ -580,7 +580,7 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 		h, err := ht.GetChainWithBackfill(ctx, h15, 8)
 		require.NoError(t, err)
 
-		require.Equal(t, uint64(8), h.ChainLength())
+		require.Equal(t, int64(8), h.ChainLength())
 		earliestInChain := h.EarliestInChain()
 		assert.Equal(t, head8.Number, earliestInChain.Number)
 		assert.Equal(t, head8.Hash, earliestInChain.Hash)
@@ -623,11 +623,11 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 
 		h, err := ht.GetChainWithBackfill(ctx, h15, 3)
 		require.NoError(t, err)
-		require.Equal(t, uint64(3), h.ChainLength())
+		require.Equal(t, int64(3), h.ChainLength())
 
 		h, err = ht.GetChainWithBackfill(ctx, h15, 5)
 		require.NoError(t, err)
-		require.Equal(t, uint64(5), h.ChainLength())
+		require.Equal(t, int64(5), h.ChainLength())
 	})
 
 	t.Run("only backfills to height 0 if chain length would otherwise cause it to try and fetch a negative head", func(t *testing.T) {
@@ -644,8 +644,8 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 
 		h, err := ht.GetChainWithBackfill(ctx, h1, 400)
 		require.NoError(t, err)
-		require.Equal(t, uint64(2), h.ChainLength())
-		require.Equal(t, uint64(0), h.EarliestInChain().Number)
+		require.Equal(t, int64(2), h.ChainLength())
+		require.Equal(t, int64(0), h.EarliestInChain().Number)
 
 		ethClient.AssertExpectations(t)
 	})
@@ -673,7 +673,7 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 
 		// Should contain 12, 11, 10, 9
 		assert.Equal(t, 4, int(h.ChainLength()))
-		assert.Equal(t, uint64(9), h.EarliestInChain().Number)
+		assert.Equal(t, int64(9), h.EarliestInChain().Number)
 
 		ethClient.AssertExpectations(t)
 	})
@@ -699,7 +699,7 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 
 		// Should contain 12, 11, 10, 9
 		assert.Equal(t, 4, int(h.ChainLength()))
-		assert.Equal(t, uint64(9), h.EarliestInChain().Number)
+		assert.Equal(t, int64(9), h.EarliestInChain().Number)
 
 		ethClient.AssertExpectations(t)
 	})
@@ -762,11 +762,11 @@ func TestHeadTracker_RingBuffer(t *testing.T) {
 
 		// Fill up the buffer first
 		for i := 0; i < bufferSize; i++ {
-			headers <- &models.Head{Number: uint64(i), Hash: esTesting.NewHash()}
+			headers <- &models.Head{Number: int64(i), Hash: esTesting.NewHash()}
 		}
 		// Now we have heads 0, 1, 2 in buffer. Wait for callback to block on head 0
 		h := <-cb.called
-		require.Equal(t, uint64(0), h.Number)
+		require.Equal(t, int64(0), h.Number)
 
 		// Head 0 has been pulled off. Callback is blocking on head 0.
 		// Buffer: 1, 2
@@ -780,15 +780,15 @@ func TestHeadTracker_RingBuffer(t *testing.T) {
 
 		// Next head to be pulled off ought to be 2
 		h = <-cb.called
-		require.Equal(t, uint64(2), h.Number)
+		require.Equal(t, int64(2), h.Number)
 		cb.resume <- true
 
 		// 3, 4
 		h = <-cb.called
-		require.Equal(t, uint64(3), h.Number)
+		require.Equal(t, int64(3), h.Number)
 		cb.resume <- true
 		h = <-cb.called
-		require.Equal(t, uint64(4), h.Number)
+		require.Equal(t, int64(4), h.Number)
 		cb.resume <- true
 
 		// Headers channel now empty

@@ -314,7 +314,7 @@ func (ht *HeadTracker) receiveHeaders() error {
 }
 
 func (ht *HeadTracker) handleNewHead(ctx context.Context, head models.Head) error {
-	defer func(start time.Time, number uint64) {
+	defer func(start time.Time, number int64) {
 		elapsed := time.Since(start)
 		if elapsed > ht.callbackExecutionThreshold() {
 			ht.logger.Warnw(fmt.Sprintf("HeadTracker finished processing head %v in %s which exceeds callback execution threshold of %s", number, elapsed.String(), ht.callbackExecutionThreshold().String()), "blockNumber", number, "time", elapsed, "id", "head_tracker")
@@ -386,7 +386,7 @@ func (ht *HeadTracker) callbackExecutionThreshold() time.Duration {
 
 // GetChainWithBackfill returns a chain of the given length, backfilling any
 // heads that may be missing from the database
-func (ht *HeadTracker) GetChainWithBackfill(ctx context.Context, head models.Head, depth uint64) (models.Head, error) {
+func (ht *HeadTracker) GetChainWithBackfill(ctx context.Context, head models.Head, depth int64) (models.Head, error) {
 	ctx, cancel := context.WithTimeout(ctx, ht.backfillTimeBudget())
 	defer cancel()
 
@@ -401,16 +401,15 @@ func (ht *HeadTracker) GetChainWithBackfill(ctx context.Context, head models.Hea
 	if baseHeight < 0 {
 		baseHeight = 0
 	}
-	baseHeightUint64 := uint64(baseHeight)
 
-	if err := ht.backfill(ctx, head.EarliestInChain(), baseHeightUint64); err != nil {
+	if err := ht.backfill(ctx, head.EarliestInChain(), baseHeight); err != nil {
 		return head, errors.Wrap(err, "GetChainWithBackfill failed backfilling")
 	}
 	return ht.store.Chain(head.Hash, depth)
 }
 
 // backfill fetches all missing heads up until the base height
-func (ht *HeadTracker) backfill(ctx context.Context, head models.Head, baseHeight uint64) error {
+func (ht *HeadTracker) backfill(ctx context.Context, head models.Head, baseHeight int64) error {
 	if head.Number <= baseHeight {
 		return nil
 	}

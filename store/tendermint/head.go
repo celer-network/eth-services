@@ -9,6 +9,10 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 )
 
+const (
+	errStrDecodeHead = "could not decode head"
+)
+
 var (
 	prefixHead = []byte("hd")
 
@@ -48,26 +52,25 @@ func (store *TMStore) LastHead() (*models.Head, error) {
 func (store *TMStore) FirstHead() (*models.Head, error) {
 	iter, err := store.nsHead.Iterator(nil, nil)
 	if err != nil {
-		return nil, errors.Wrap(err, "could not create iterator")
+		return nil, toCreateIterError(err)
 	}
 	var firstHead *models.Head = nil
 	var iterError error
-	for iter.Valid() {
+	for ; iter.Valid(); iter.Next() {
 		value := iter.Value()
 		var head models.Head
 		unmarshalErr := msgpack.Unmarshal(value, &head)
 		if unmarshalErr != nil {
-			iterError = errors.Wrap(err, "could not decode head")
+			iterError = toDecodeHeadError(err)
 			break
 		}
 		if firstHead == nil || head.Number < firstHead.Number {
 			firstHead = &head
 		}
-		iter.Next()
 	}
 	err = iter.Close()
 	if err != nil {
-		return nil, errors.Wrap(err, "could not close iterator")
+		return nil, toCloseIterError(err)
 	}
 	if iterError != nil {
 		return nil, iterError
@@ -89,7 +92,7 @@ func (store *TMStore) HeadByHash(hash common.Hash) (*models.Head, error) {
 }
 
 // TrimOldHeads deletes heads such that only the top N block numbers remain.
-func (store *TMStore) TrimOldHeads(depth uint64) error {
+func (store *TMStore) TrimOldHeads(depth int64) error {
 	lastHead, err := store.LastHead()
 	if err != nil {
 		return err
@@ -97,26 +100,25 @@ func (store *TMStore) TrimOldHeads(depth uint64) error {
 	highestNumber := lastHead.Number
 	iter, err := store.nsHead.Iterator(nil, nil)
 	if err != nil {
-		return errors.Wrap(err, "could not create iterator")
+		return toCreateIterError(err)
 	}
 	toTrim := make([][]byte, 0)
 	var iterError error
-	for iter.Valid() {
+	for ; iter.Valid(); iter.Next() {
 		value := iter.Value()
 		var head models.Head
 		unmarshalErr := msgpack.Unmarshal(value, &head)
 		if unmarshalErr != nil {
-			iterError = errors.Wrap(err, "could not decode head")
+			iterError = toDecodeHeadError(err)
 			break
 		}
 		if highestNumber-head.Number >= depth {
 			toTrim = append(toTrim, head.Hash.Bytes())
 		}
-		iter.Next()
 	}
 	err = iter.Close()
 	if err != nil {
-		return errors.Wrap(err, "could not close iterator")
+		return toCloseIterError(err)
 	}
 	if iterError != nil {
 		return iterError
@@ -131,7 +133,7 @@ func (store *TMStore) TrimOldHeads(depth uint64) error {
 }
 
 // Chain returns the chain of heads starting at hash and up to lookback parents.
-func (store *TMStore) Chain(hash common.Hash, lookback uint64) (models.Head, error) {
+func (store *TMStore) Chain(hash common.Hash, lookback int64) (models.Head, error) {
 	var firstHead *models.Head
 	var prevHead *models.Head
 	currHash := hash
@@ -156,4 +158,8 @@ func (store *TMStore) Chain(hash common.Hash, lookback uint64) (models.Head, err
 		return models.Head{}, esStore.ErrNotFound
 	}
 	return *firstHead, nil
+}
+
+func toDecodeHeadError(err error) error {
+	return errors.Wrap(err, errStrDecodeHead)
 }

@@ -9,7 +9,8 @@ import (
 )
 
 var (
-	ErrNotFound = errors.New("value not found")
+	ErrNotFound           = errors.New("value not found")
+	ErrCouldNotGetReceipt = errors.New("could not get receipt")
 )
 
 // Store defines the interface for the storage layer
@@ -28,10 +29,10 @@ type Store interface {
 	HeadByHash(hash common.Hash) (*models.Head, error)
 
 	// TrimOldHeads deletes heads such that only the top N block numbers remain.
-	TrimOldHeads(depth uint64) error
+	TrimOldHeads(depth int64) error
 
 	// Chain returns the chain of heads starting at hash and up to lookback parents.
-	Chain(hash common.Hash, lookback uint64) (models.Head, error)
+	Chain(hash common.Hash, lookback int64) (models.Head, error)
 
 	// GetAccounts gets the list of accounts
 	GetAccounts() ([]*models.Account, error)
@@ -61,4 +62,41 @@ type Store interface {
 	SetNextNonce(address common.Address, nextNonce int64) error
 
 	GetNextUnstartedTx(fromAddress common.Address) (*models.Tx, error)
+
+	GetTxsRequiringReceiptFetch() ([]*models.Tx, error)
+
+	SetBroadcastBeforeBlockNum(blockNum int64) error
+
+	// MarkConfirmedMissingReceipt
+	// It is possible that we can fail to get a receipt for all TxAttempts
+	// even though a transaction with this nonce has long since been confirmed (we
+	// know this because transactions with higher nonces HAVE returned a receipt).
+	//
+	// This can probably only happen if an external wallet used the account (or
+	// conceivably because of some bug in the remote eth node that prevents it
+	// from returning a receipt for a valid transaction).
+	//
+	// In this case we mark these transactions as 'confirmed_missing_receipt' to
+	// prevent gas bumping.
+	//
+	// We will continue to try to fetch a receipt for these attempts until all
+	// attempts are below the finality depth from current head.
+	MarkConfirmedMissingReceipt() error
+
+	// MarkOldTxsMissingReceiptAsErrored
+	//
+	// Once a Tx has all of its attempts broadcast before some cutoff threshold,
+	// we mark it as fatally errored (never sent).
+	//
+	// Any 'confirmed_missing_receipt' Tx with all attempts older than this block height will be
+	// marked as errored. We will not try to query for receipts for this transaction any more.
+	MarkOldTxsMissingReceiptAsErrored(cutoff int64) error
+
+	// GetTxsRequiringNewAttempt returns transactions that have all attempts which are unconfirmed
+	// for at least gasBumpThreshold blocks, limited by the depth limit on pending transactions.
+	GetTxsRequiringNewAttempt(address common.Address, blockNum int64, gasBumpThreshold int64, depth int) ([]*models.Tx, error)
+
+	GetTxsConfirmedAtOrAboveBlockHeight(blockNum int64) ([]*models.Tx, error)
+
+	GetInProgressAttempts(address common.Address) ([]*models.TxAttempt, error)
 }

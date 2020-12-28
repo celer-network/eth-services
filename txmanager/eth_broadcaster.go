@@ -10,6 +10,7 @@ import (
 	"github.com/celer-network/eth-services/store"
 	"github.com/celer-network/eth-services/store/models"
 	"github.com/celer-network/eth-services/types"
+	uuid "github.com/satori/go.uuid"
 
 	gethCommon "github.com/ethereum/go-ethereum/common"
 	"github.com/pkg/errors"
@@ -48,6 +49,8 @@ type ethBroadcaster struct {
 	trigger chan struct{}
 	chStop  chan struct{}
 	wg      sync.WaitGroup
+
+	lock sync.Mutex
 
 	StartStopOnce
 }
@@ -148,6 +151,8 @@ func (eb *ethBroadcaster) monitorTxs() {
 }
 
 func (eb *ethBroadcaster) ProcessUnstartedTxs(account *models.Account) error {
+	eb.lock.Lock()
+	defer eb.lock.Unlock()
 	return eb.processUnstartedTxs(account.Address)
 }
 
@@ -362,7 +367,7 @@ func (eb *ethBroadcaster) saveUnconfirmed(tx *models.Tx, attempt *models.TxAttem
 	tx.State = models.TxStateUnconfirmed
 	// Update state
 	for i, currAttempt := range tx.TxAttempts {
-		if currAttempt.ID == attempt.ID {
+		if uuid.Equal(currAttempt.ID, attempt.ID) {
 			tx.TxAttempts[i].State = models.TxAttemptStateBroadcast
 			break
 		}
@@ -379,7 +384,7 @@ func (eb *ethBroadcaster) saveUnconfirmed(tx *models.Tx, attempt *models.TxAttem
 }
 
 func (eb *ethBroadcaster) tryAgainWithHigherGasPrice(sendError *client.SendError, tx *models.Tx, attempt *models.TxAttempt) error {
-	bumpedGasPrice, err := BumpGas(eb.config, attempt.GasPrice)
+	bumpedGasPrice, err := BumpGas(eb.config, &attempt.GasPrice)
 	if err != nil {
 		return errors.Wrap(err, "tryAgainWithHigherGasPrice failed")
 	}
@@ -387,7 +392,7 @@ func (eb *ethBroadcaster) tryAgainWithHigherGasPrice(sendError *client.SendError
 		"Eth node returned: '%s'. "+
 		"Bumping to %v wei and retrying. ACTION REQUIRED: This is a configuration error. "+
 		"Consider increasing DefaultGasPrice", eb.config.DefaultGasPrice, sendError.Error(), bumpedGasPrice), "err", err)
-	if bumpedGasPrice.Cmp(attempt.GasPrice) == 0 && bumpedGasPrice.Cmp(eb.config.MaxGasPrice) == 0 {
+	if bumpedGasPrice.Cmp(&attempt.GasPrice) == 0 && bumpedGasPrice.Cmp(eb.config.MaxGasPrice) == 0 {
 		return errors.Errorf("Hit gas price bump ceiling, will not bump further. This is a terminal error")
 	}
 	replacementAttempt, err := newAttempt(eb.keyStore, eb.config, tx, bumpedGasPrice)

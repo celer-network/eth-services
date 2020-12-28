@@ -13,9 +13,9 @@ type Config struct {
 	SecondaryRPCURLs []*url.URL
 	ChainID          *big.Int
 
-	HeadTrackerHistoryDepth  uint64
+	HeadTrackerHistoryDepth  int64
 	HeadTrackerMaxBufferSize int
-	FinalityDepth            uint64
+	FinalityDepth            int64
 
 	DBPollInterval time.Duration
 
@@ -24,4 +24,10 @@ type Config struct {
 	MaxGasPrice     *big.Int
 	GasBumpPercent  uint64
 	GasBumpWei      *big.Int
+
+	// Number of elapsed blocks to trigger gas bumping
+	GasBumpThreshold int64
+	GasBumpTxDepth   int
+
+	DefaultGasLimit uint64
 }
