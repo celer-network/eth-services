@@ -29,6 +29,12 @@ import (
 // - transition of txes out of unstarted into either fatal_error or unconfirmed
 // - existence of a saved tx_attempt
 type EthBroadcaster interface {
+	AddTx(txID uuid.UUID,
+		fromAddress gethCommon.Address,
+		toAddress gethCommon.Address,
+		encodedPayload []byte,
+		gasLimit uint64,
+	) error
 	Start() error
 	Stop() error
 
@@ -73,6 +79,16 @@ func NewEthBroadcaster(
 		chStop:    make(chan struct{}),
 		wg:        sync.WaitGroup{},
 	}
+}
+
+func (eb *ethBroadcaster) AddTx(
+	txID uuid.UUID,
+	fromAddress gethCommon.Address,
+	toAddress gethCommon.Address,
+	encodedPayload []byte,
+	gasLimit uint64,
+) error {
+	return eb.store.AddTx(txID, fromAddress, toAddress, encodedPayload, gasLimit)
 }
 
 func (eb *ethBroadcaster) Start() error {

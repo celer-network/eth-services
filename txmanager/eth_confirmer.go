@@ -11,6 +11,7 @@ import (
 	"github.com/celer-network/eth-services/client"
 	esStore "github.com/celer-network/eth-services/store"
 	"github.com/celer-network/eth-services/store/models"
+	"github.com/celer-network/eth-services/subscription"
 	"github.com/celer-network/eth-services/types"
 
 	gethCommon "github.com/ethereum/go-ethereum/common"
@@ -26,6 +27,12 @@ var (
 	// This most likely happened because an external wallet used the account for this nonce
 	ErrCouldNotGetReceipt = "could not get receipt"
 )
+
+type EthConfirmer interface {
+	subscription.HeadTrackable
+
+	GetTx(fromAddress gethCommon.Address, txID uuid.UUID) (*models.Tx, error)
+}
 
 // EthConfirmer is a broad service which performs four different tasks in sequence on every new longest chain
 // Step 1: Mark that all currently pending transaction attempts were broadcast before this block
@@ -47,15 +54,20 @@ func NewEthConfirmer(
 	ethClient client.Client,
 	store esStore.Store,
 	keyStore client.KeyStoreInterface,
-	config *types.Config,
-	logger types.Logger) *ethConfirmer {
+	config *types.Config) EthConfirmer {
 	return &ethConfirmer{
 		ethClient: ethClient,
 		store:     store,
 		keyStore:  keyStore,
 		config:    config,
-		logger:    logger,
+		logger:    config.Logger,
 	}
+}
+
+var _ EthConfirmer = (*ethConfirmer)(nil)
+
+func (ec *ethConfirmer) GetTx(fromAddress gethCommon.Address, txID uuid.UUID) (*models.Tx, error) {
+	return ec.store.GetTx(fromAddress, txID)
 }
 
 // Do nothing on connect, simply wait for the next head

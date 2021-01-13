@@ -507,21 +507,21 @@ func (store *TMStore) GetTxsConfirmedAtOrAboveBlockHeight(blockNum int64) ([]*mo
 			if tx.State != models.TxStateConfirmed && tx.State != models.TxStateConfirmedMissingReceipt {
 				continue
 			}
-			includeTx := true
-			for _, attempt := range tx.TxAttempts {
+			// TODO: Just checking the last attempt should suffice
+			includeTx := false
+			for i := len(tx.TxAttempts) - 1; i >= 0; i-- {
+				attempt := tx.TxAttempts[i]
 				if attempt.State != models.TxAttemptStateBroadcast {
-					includeTx = false
-					break
+					continue
 				}
-				includeAttempt := true
-				for _, receipt := range attempt.Receipts {
-					if receipt.BlockNumber < blockNum {
-						includeAttempt = false
+				for j := len(attempt.Receipts) - 1; j >= 0; j-- {
+					receipt := attempt.Receipts[j]
+					if receipt.BlockNumber >= blockNum {
+						includeTx = true
 						break
 					}
 				}
-				if !includeAttempt {
-					includeTx = false
+				if includeTx {
 					break
 				}
 			}
