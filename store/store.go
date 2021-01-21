@@ -1,6 +1,8 @@
 package store
 
 import (
+	"math/big"
+
 	"github.com/pkg/errors"
 
 	"github.com/celer-network/eth-services/store/models"
@@ -45,6 +47,7 @@ type Store interface {
 		txID uuid.UUID,
 		fromAddress common.Address,
 		toAddress common.Address,
+		value *big.Int,
 		encodedPayload []byte,
 		gasLimit uint64,
 	) error

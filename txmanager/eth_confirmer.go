@@ -369,7 +369,7 @@ func (ec *ethConfirmer) newAttemptWithGasBump(tx *models.Tx) (attempt *models.Tx
 			return &previousAttempt, nil
 		}
 		previousGasPrice := previousAttempt.GasPrice
-		bumpedGasPrice, err = BumpGas(ec.config, &previousGasPrice)
+		bumpedGasPrice, err = BumpGas(ec.config, previousGasPrice)
 		if err != nil {
 			ec.logger.Errorw("Failed to bump gas",
 				"err", err,
@@ -411,7 +411,7 @@ func (ec *ethConfirmer) handleInProgressAttempt(ctx context.Context, tx *models.
 		// already bumped above the required minimum in EthBroadcaster.
 		//
 		// It could conceivably happen if the remote eth node changed it's configuration.
-		bumpedGasPrice, err := BumpGas(ec.config, &attempt.GasPrice)
+		bumpedGasPrice, err := BumpGas(ec.config, attempt.GasPrice)
 		if err != nil {
 			return errors.Wrap(err, "could not bump gas for terminally underpriced transaction")
 		}

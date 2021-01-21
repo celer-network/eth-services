@@ -8,7 +8,7 @@ import (
 	"sync"
 
 	"github.com/celer-network/eth-services/store/models"
-	estypes "github.com/celer-network/eth-services/types"
+	esTypes "github.com/celer-network/eth-services/types"
 
 	ethereum "github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
@@ -77,32 +77,30 @@ type Subscription interface {
 type Impl struct {
 	GethClient
 	RPCClient
-	url                  string // For reestablishing the connection after a disconnect
+	url                  *url.URL // For reestablishing the connection after a disconnect
 	SecondaryGethClients []GethClient
 	SecondaryRPCClients  []RPCClient
-	secondaryURLs        []url.URL
+	secondaryURLs        []*url.URL
 	mocked               bool
-	logger               estypes.Logger
+	logger               esTypes.Logger
 }
 
 var _ Client = (*Impl)(nil)
 
 // NewImpl creates a new client implementation
-func NewImpl(rpcURL string, secondaryRPCURLs ...url.URL) (*Impl, error) {
-	parsed, err := url.ParseRequestURI(rpcURL)
-	if err != nil {
-		return nil, err
-	}
-	if parsed.Scheme != "ws" && parsed.Scheme != "wss" {
-		return nil, errors.Errorf("Ethereum URL scheme must be websocket: %s", parsed.String())
+func NewImpl(config *esTypes.Config) (*Impl, error) {
+	rpcURL := config.RPCURL
+	if rpcURL.Scheme != "ws" && rpcURL.Scheme != "wss" {
+		return nil, errors.Errorf("Ethereum URL scheme must be websocket: %s", rpcURL.String())
 	}
 
+	secondaryRPCURLs := config.SecondaryRPCURLs
 	for _, url := range secondaryRPCURLs {
 		if url.Scheme != "http" && url.Scheme != "https" {
 			return nil, errors.Errorf("secondary Ethereum RPC URL scheme must be http(s): %s", url.String())
 		}
 	}
-	return &Impl{url: rpcURL, secondaryURLs: secondaryRPCURLs}, nil
+	return &Impl{url: rpcURL, secondaryURLs: secondaryRPCURLs, logger: config.Logger}, nil
 }
 
 func (client *Impl) Dial(ctx context.Context) error {
@@ -113,7 +111,7 @@ func (client *Impl) Dial(ctx context.Context) error {
 		panic("eth.Client.Dial(...) should only be called once during the application's lifetime.")
 	}
 
-	rpcClient, err := rpc.DialContext(ctx, client.url)
+	rpcClient, err := rpc.DialContext(ctx, client.url.String())
 	if err != nil {
 		return err
 	}

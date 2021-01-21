@@ -72,7 +72,3 @@ func concatKeys(parts ...[]byte) []byte {
 func toCreateIterError(err error) error {
 	return errors.Wrap(err, errStrCreateIter)
 }
-
-func toCloseIterError(err error) error {
-	return errors.Wrap(err, errStrCloseIter)
-}

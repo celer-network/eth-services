@@ -3,6 +3,7 @@ package txmanager
 import (
 	"context"
 	"fmt"
+	"math/big"
 	"sync"
 	"time"
 
@@ -29,13 +30,18 @@ import (
 // - transition of txes out of unstarted into either fatal_error or unconfirmed
 // - existence of a saved tx_attempt
 type EthBroadcaster interface {
+	RegisterAccount(address gethCommon.Address) error
+
 	AddTx(txID uuid.UUID,
-		fromAddress gethCommon.Address,
-		toAddress gethCommon.Address,
+		from gethCommon.Address,
+		to gethCommon.Address,
+		value *big.Int,
 		encodedPayload []byte,
 		gasLimit uint64,
 	) error
+
 	Start() error
+
 	Stop() error
 
 	Trigger()
@@ -81,14 +87,32 @@ func NewEthBroadcaster(
 	}
 }
 
+func (eb *ethBroadcaster) RegisterAccount(address gethCommon.Address) error {
+	account, err := eb.keyStore.GetAccountByAddress(address)
+	if err != nil {
+		return err
+	}
+	storedAccount := &models.Account{
+		Address:   account.Address,
+		NextNonce: -1,
+	}
+	return eb.store.PutAccount(storedAccount)
+}
+
 func (eb *ethBroadcaster) AddTx(
 	txID uuid.UUID,
-	fromAddress gethCommon.Address,
-	toAddress gethCommon.Address,
+	from gethCommon.Address,
+	to gethCommon.Address,
+	value *big.Int,
 	encodedPayload []byte,
 	gasLimit uint64,
 ) error {
-	return eb.store.AddTx(txID, fromAddress, toAddress, encodedPayload, gasLimit)
+	err := eb.store.AddTx(txID, from, to, value, encodedPayload, gasLimit)
+	if err != nil {
+		return err
+	}
+	eb.Trigger()
+	return nil
 }
 
 func (eb *ethBroadcaster) Start() error {
@@ -161,6 +185,7 @@ func (eb *ethBroadcaster) monitorTxs() {
 			}
 			continue
 		case <-pollDBTimer.C:
+			eb.logger.Debug("timer triggered")
 			continue
 		}
 	}
@@ -400,7 +425,7 @@ func (eb *ethBroadcaster) saveUnconfirmed(tx *models.Tx, attempt *models.TxAttem
 }
 
 func (eb *ethBroadcaster) tryAgainWithHigherGasPrice(sendError *client.SendError, tx *models.Tx, attempt *models.TxAttempt) error {
-	bumpedGasPrice, err := BumpGas(eb.config, &attempt.GasPrice)
+	bumpedGasPrice, err := BumpGas(eb.config, attempt.GasPrice)
 	if err != nil {
 		return errors.Wrap(err, "tryAgainWithHigherGasPrice failed")
 	}
@@ -408,7 +433,7 @@ func (eb *ethBroadcaster) tryAgainWithHigherGasPrice(sendError *client.SendError
 		"Eth node returned: '%s'. "+
 		"Bumping to %v wei and retrying. ACTION REQUIRED: This is a configuration error. "+
 		"Consider increasing DefaultGasPrice", eb.config.DefaultGasPrice, sendError.Error(), bumpedGasPrice), "err", err)
-	if bumpedGasPrice.Cmp(&attempt.GasPrice) == 0 && bumpedGasPrice.Cmp(eb.config.MaxGasPrice) == 0 {
+	if bumpedGasPrice.Cmp(attempt.GasPrice) == 0 && bumpedGasPrice.Cmp(eb.config.MaxGasPrice) == 0 {
 		return errors.Errorf("Hit gas price bump ceiling, will not bump further. This is a terminal error")
 	}
 	replacementAttempt, err := newAttempt(eb.keyStore, eb.config, tx, bumpedGasPrice)

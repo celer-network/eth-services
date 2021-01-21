@@ -47,7 +47,7 @@ type Tx struct {
 	FromAddress    common.Address
 	ToAddress      common.Address
 	EncodedPayload []byte
-	Value          big.Int
+	Value          *big.Int
 	GasLimit       uint64
 	State          TxState
 	Error          string
@@ -69,7 +69,7 @@ func (e Tx) GetID() string {
 type TxAttempt struct {
 	ID                      uuid.UUID
 	TxID                    uuid.UUID
-	GasPrice                big.Int
+	GasPrice                *big.Int
 	SignedRawTx             []byte
 	Hash                    common.Hash
 	BroadcastBeforeBlockNum int64

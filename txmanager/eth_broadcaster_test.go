@@ -42,7 +42,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_Success(t *testing.T) {
 	toAddress := gethCommon.HexToAddress("0x6C03DDA95a2AEd917EeCc6eddD4b9D16E6380411")
 
 	encodedPayload := []byte{1, 2, 3}
-	value := *big.NewInt(142)
+	value := big.NewInt(142)
 	gasLimit := uint64(242)
 
 	t.Run("no txes at all", func(t *testing.T) {
@@ -171,7 +171,7 @@ func TestEthBroadcaster_AssignsNonceOnFirstRun(t *testing.T) {
 		FromAddress:    fromAddress,
 		ToAddress:      toAddress,
 		EncodedPayload: []byte{42, 42, 0},
-		Value:          *big.NewInt(0),
+		Value:          big.NewInt(0),
 		GasLimit:       gasLimit,
 		State:          models.TxStateUnstarted,
 		Nonce:          -1,
@@ -494,7 +494,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 			FromAddress:    fromAddress,
 			ToAddress:      toAddress,
 			EncodedPayload: encodedPayload,
-			Value:          *value,
+			Value:          value,
 			GasLimit:       gasLimit,
 			State:          models.TxStateUnstarted,
 		}
@@ -533,7 +533,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 			FromAddress:    fromAddress,
 			ToAddress:      toAddress,
 			EncodedPayload: encodedPayload,
-			Value:          *value,
+			Value:          value,
 			GasLimit:       gasLimit,
 			State:          models.TxStateUnstarted,
 		}
@@ -573,7 +573,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 			FromAddress:    fromAddress,
 			ToAddress:      toAddress,
 			EncodedPayload: encodedPayload,
-			Value:          *value,
+			Value:          value,
 			GasLimit:       gasLimit,
 			State:          models.TxStateUnstarted,
 		}
@@ -634,7 +634,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 			FromAddress:    fromAddress,
 			ToAddress:      toAddress,
 			EncodedPayload: encodedPayload,
-			Value:          *value,
+			Value:          value,
 			GasLimit:       gasLimit,
 			State:          models.TxStateUnstarted,
 		}
@@ -676,7 +676,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 		FromAddress:    fromAddress,
 		ToAddress:      toAddress,
 		EncodedPayload: encodedPayload,
-		Value:          *value,
+		Value:          value,
 		GasLimit:       gasLimit,
 		State:          models.TxStateUnstarted,
 	}
@@ -751,7 +751,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 			FromAddress:    fromAddress,
 			ToAddress:      toAddress,
 			EncodedPayload: encodedPayload,
-			Value:          *value,
+			Value:          value,
 			GasLimit:       gasLimit,
 			State:          models.TxStateUnstarted,
 		}

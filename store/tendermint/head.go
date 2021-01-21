@@ -68,10 +68,7 @@ func (store *TMStore) FirstHead() (*models.Head, error) {
 			firstHead = &head
 		}
 	}
-	err = iter.Close()
-	if err != nil {
-		return nil, toCloseIterError(err)
-	}
+	iter.Close()
 	if iterError != nil {
 		return nil, iterError
 	}
@@ -116,10 +113,7 @@ func (store *TMStore) TrimOldHeads(depth int64) error {
 			toTrim = append(toTrim, head.Hash.Bytes())
 		}
 	}
-	err = iter.Close()
-	if err != nil {
-		return toCloseIterError(err)
-	}
+	iter.Close()
 	if iterError != nil {
 		return iterError
 	}

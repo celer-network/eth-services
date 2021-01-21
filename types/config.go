@@ -25,9 +25,6 @@ type Config struct {
 	GasBumpPercent  uint64
 	GasBumpWei      *big.Int
 
-	// Number of elapsed blocks to trigger gas bumping
-	GasBumpThreshold int64
+	GasBumpThreshold int64 // Number of elapsed blocks to trigger gas bumping
 	GasBumpTxDepth   int
-
-	DefaultGasLimit uint64
 }

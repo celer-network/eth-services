@@ -31,7 +31,7 @@ func newAttempt(keyStore client.KeyStoreInterface, config *types.Config, tx *mod
 		return &attempt, errors.Wrapf(err, "error getting account %s for transaction %v", tx.FromAddress.String(), tx.ID)
 	}
 
-	transaction := gethTypes.NewTransaction(uint64(tx.Nonce), tx.ToAddress, &tx.Value, tx.GasLimit, gasPrice, tx.EncodedPayload)
+	transaction := gethTypes.NewTransaction(uint64(tx.Nonce), tx.ToAddress, tx.Value, tx.GasLimit, gasPrice, tx.EncodedPayload)
 	hash, signedTxBytes, err := signTx(keyStore, account, transaction, config.ChainID)
 	if err != nil {
 		return &attempt, errors.Wrapf(err, "error using account %s to sign transaction %v", tx.FromAddress.String(), tx.ID)
@@ -41,7 +41,7 @@ func newAttempt(keyStore client.KeyStoreInterface, config *types.Config, tx *mod
 	attempt.State = models.TxAttemptStateInProgress
 	attempt.SignedRawTx = signedTxBytes
 	attempt.TxID = tx.ID
-	attempt.GasPrice = *gasPrice
+	attempt.GasPrice = gasPrice
 	attempt.Hash = hash
 
 	return &attempt, nil

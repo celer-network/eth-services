@@ -65,6 +65,7 @@ func (store *TMStore) AddTx(
 	txID uuid.UUID,
 	fromAddress common.Address,
 	toAddress common.Address,
+	value *big.Int,
 	encodedPayload []byte,
 	gasLimit uint64,
 ) error {
@@ -73,7 +74,7 @@ func (store *TMStore) AddTx(
 		FromAddress:    fromAddress,
 		ToAddress:      toAddress,
 		EncodedPayload: encodedPayload,
-		Value:          *big.NewInt(0),
+		Value:          value,
 		GasLimit:       gasLimit,
 		State:          models.TxStateUnstarted,
 	}
@@ -114,10 +115,7 @@ func (store *TMStore) GetTxs(fromAddress common.Address) ([]*models.Tx, error) {
 		}
 		txs = append(txs, &tx)
 	}
-	err = iter.Close()
-	if err != nil {
-		return nil, toCloseIterError(err)
-	}
+	iter.Close()
 	if iterError != nil {
 		return nil, iterError
 	}
@@ -147,12 +145,8 @@ func (store *TMStore) GetOneInProgressTx(fromAddress common.Address) (*models.Tx
 			inProgressTx = &tx
 			break
 		}
-		iter.Next()
 	}
-	err = iter.Close()
-	if err != nil {
-		return nil, toCloseIterError(err)
-	}
+	iter.Close()
 	if iterError != nil {
 		return nil, iterError
 	}
@@ -206,10 +200,7 @@ func (store *TMStore) GetNextUnstartedTx(fromAddress common.Address) (*models.Tx
 			break
 		}
 	}
-	err = iter.Close()
-	if err != nil {
-		return nil, toCloseIterError(err)
-	}
+	iter.Close()
 	if iterError != nil {
 		return nil, iterError
 	}
@@ -218,8 +209,6 @@ func (store *TMStore) GetNextUnstartedTx(fromAddress common.Address) (*models.Tx
 	}
 	return unstartedTx, nil
 }
-
-func (store *TMStore) GetAllTxs() error
 
 func (store *TMStore) GetTxsRequiringReceiptFetch() ([]*models.Tx, error) {
 	accounts, err := store.GetAccounts()
@@ -246,10 +235,7 @@ func (store *TMStore) GetTxsRequiringReceiptFetch() ([]*models.Tx, error) {
 				txs = append(txs, &tx)
 			}
 		}
-		err = iter.Close()
-		if err != nil {
-			return nil, toCloseIterError(err)
-		}
+		iter.Close()
 		if iterError != nil {
 			return nil, iterError
 		}
@@ -281,10 +267,7 @@ func (store *TMStore) SetBroadcastBeforeBlockNum(blockNum int64) error {
 			}
 			txs = append(txs, &tx)
 		}
-		err = iter.Close()
-		if err != nil {
-			return toCloseIterError(err)
-		}
+		iter.Close()
 		if iterError != nil {
 			return iterError
 		}
@@ -329,10 +312,7 @@ func (store *TMStore) MarkConfirmedMissingReceipt() error {
 				maxNonce = tx.Nonce
 			}
 		}
-		err = iter.Close()
-		if err != nil {
-			return toCloseIterError(err)
-		}
+		iter.Close()
 		if iterError != nil {
 			return iterError
 		}
@@ -357,10 +337,7 @@ func (store *TMStore) MarkConfirmedMissingReceipt() error {
 				txsToUpdate = append(txsToUpdate, &tx)
 			}
 		}
-		err = iter.Close()
-		if err != nil {
-			return toCloseIterError(err)
-		}
+		iter.Close()
 		if iterError != nil {
 			return iterError
 		}
@@ -412,10 +389,7 @@ func (store *TMStore) MarkOldTxsMissingReceiptAsErrored(cutoff int64) error {
 				}
 			}
 		}
-		err = iter.Close()
-		if err != nil {
-			return toCloseIterError(err)
-		}
+		iter.Close()
 		if iterError != nil {
 			return iterError
 		}
@@ -463,10 +437,7 @@ func (store *TMStore) GetTxsRequiringNewAttempt(address common.Address, blockNum
 			txs = append(txs, &tx)
 		}
 	}
-	err = iter.Close()
-	if err != nil {
-		return nil, toCloseIterError(err)
-	}
+	iter.Close()
 	if iterError != nil {
 		return nil, iterError
 	}
@@ -529,10 +500,7 @@ func (store *TMStore) GetTxsConfirmedAtOrAboveBlockHeight(blockNum int64) ([]*mo
 				txs = append(txs, &tx)
 			}
 		}
-		err = iter.Close()
-		if err != nil {
-			return nil, toCloseIterError(err)
-		}
+		iter.Close()
 		if iterError != nil {
 			return nil, iterError
 		}
@@ -571,10 +539,7 @@ func (store *TMStore) GetInProgressAttempts(address common.Address) ([]*models.T
 			}
 		}
 	}
-	err = iter.Close()
-	if err != nil {
-		return nil, toCloseIterError(err)
-	}
+	iter.Close()
 	if iterError != nil {
 		return nil, iterError
 	}

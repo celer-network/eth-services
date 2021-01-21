@@ -1,6 +1,8 @@
 package txmanager
 
 import (
+	"math/big"
+
 	esClient "github.com/celer-network/eth-services/client"
 	esStore "github.com/celer-network/eth-services/store"
 	esStoreModels "github.com/celer-network/eth-services/store/models"
@@ -13,9 +15,12 @@ import (
 type TxManager interface {
 	Start() error
 
+	RegisterAccount(address gethCommon.Address) error
+
 	AddTx(
-		fromAddress gethCommon.Address,
-		toAddress gethCommon.Address,
+		from gethCommon.Address,
+		to gethCommon.Address,
+		value *big.Int,
 		encodedPayload []byte,
 		gasLimit uint64,
 	) error
@@ -59,14 +64,19 @@ func (txm *txManager) Start() error {
 	return txm.broadcaster.Start()
 }
 
+func (txm *txManager) RegisterAccount(address gethCommon.Address) error {
+	return txm.broadcaster.RegisterAccount(address)
+}
+
 func (txm *txManager) AddTx(
 	fromAddress gethCommon.Address,
-	toAddress gethCommon.Address,
+	to gethCommon.Address,
+	value *big.Int,
 	encodedPayload []byte,
 	gasLimit uint64,
 ) error {
 	txID := uuid.NewV4()
-	return txm.broadcaster.AddTx(txID, fromAddress, toAddress, encodedPayload, gasLimit)
+	return txm.broadcaster.AddTx(txID, fromAddress, to, value, encodedPayload, gasLimit)
 }
 
 func (txm *txManager) IsTxConfirmedAtOrBeforeBlockNumber(
