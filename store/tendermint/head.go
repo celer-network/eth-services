@@ -26,12 +26,12 @@ func (store *TMStore) InsertHead(head models.Head) error {
 		return err
 	}
 	if lastHead == nil || head.Number >= lastHead.Number {
-		setErr := set(store.nsHead, keyLastHead, head)
+		setErr := set(store.nsHead, keyLastHead, &head)
 		if setErr != nil {
 			return errors.Wrap(setErr, "error updating last head")
 		}
 	}
-	return set(store.nsHead, head.Hash.Bytes(), head)
+	return set(store.nsHead, head.Hash.Bytes(), &head)
 }
 
 // LastHead returns the head with the highest number. In the case of ties (e.g.

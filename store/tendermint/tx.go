@@ -7,9 +7,9 @@ import (
 	esStore "github.com/celer-network/eth-services/store"
 	"github.com/celer-network/eth-services/store/models"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
-	uuid "github.com/satori/go.uuid"
-	tmdb "github.com/tendermint/tm-db"
+	tmDB "github.com/tendermint/tm-db"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
@@ -28,7 +28,7 @@ var (
 )
 
 func (store *TMStore) PutAccount(account *models.Account) error {
-	return set(store.nsAccount, account.Address.Bytes(), &account)
+	return set(store.nsAccount, account.Address.Bytes(), account)
 }
 
 func (store *TMStore) GetAccount(fromAddress common.Address) (*models.Account, error) {
@@ -78,19 +78,18 @@ func (store *TMStore) AddTx(
 		GasLimit:       gasLimit,
 		State:          models.TxStateUnstarted,
 	}
-	nsTxAddr := tmdb.NewPrefixDB(store.nsTx, fromAddress.Bytes())
-	return set(nsTxAddr, fromAddress.Bytes(), tx)
+	return store.PutTx(&tx)
 }
 
 func (store *TMStore) PutTx(tx *models.Tx) error {
-	nsTxAddr := tmdb.NewPrefixDB(store.nsTx, tx.FromAddress.Bytes())
-	return set(nsTxAddr, tx.ID.Bytes(), &tx)
+	nsTxAddr := tmDB.NewPrefixDB(store.nsTx, tx.FromAddress.Bytes())
+	return set(nsTxAddr, tx.ID[:], tx)
 }
 
 func (store *TMStore) GetTx(fromAddress common.Address, id uuid.UUID) (*models.Tx, error) {
-	nsTxAddr := tmdb.NewPrefixDB(store.nsTx, fromAddress.Bytes())
+	nsTxAddr := tmDB.NewPrefixDB(store.nsTx, fromAddress.Bytes())
 	var tx models.Tx
-	err := get(nsTxAddr, id.Bytes(), &tx)
+	err := get(nsTxAddr, id[:], &tx)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +97,7 @@ func (store *TMStore) GetTx(fromAddress common.Address, id uuid.UUID) (*models.T
 }
 
 func (store *TMStore) GetTxs(fromAddress common.Address) ([]*models.Tx, error) {
-	nsTxAddr := tmdb.NewPrefixDB(store.nsTx, fromAddress.Bytes())
+	nsTxAddr := tmDB.NewPrefixDB(store.nsTx, fromAddress.Bytes())
 	var txs []*models.Tx
 	iter, err := nsTxAddr.Iterator(nil, nil)
 	if err != nil {
@@ -126,7 +125,7 @@ func (store *TMStore) GetTxs(fromAddress common.Address) ([]*models.Tx, error) {
 }
 
 func (store *TMStore) GetOneInProgressTx(fromAddress common.Address) (*models.Tx, error) {
-	nsTxAddr := tmdb.NewPrefixDB(store.nsTx, fromAddress.Bytes())
+	nsTxAddr := tmDB.NewPrefixDB(store.nsTx, fromAddress.Bytes())
 	iter, err := nsTxAddr.Iterator(nil, nil)
 	if err != nil {
 		return nil, toCreateIterError(err)
@@ -180,7 +179,7 @@ func (store *TMStore) SetNextNonce(address common.Address, nextNonce int64) erro
 }
 
 func (store *TMStore) GetNextUnstartedTx(fromAddress common.Address) (*models.Tx, error) {
-	nsTxAddr := tmdb.NewPrefixDB(store.nsTx, fromAddress.Bytes())
+	nsTxAddr := tmDB.NewPrefixDB(store.nsTx, fromAddress.Bytes())
 	iter, err := nsTxAddr.Iterator(nil, nil)
 	if err != nil {
 		return nil, toCreateIterError(err)
@@ -217,7 +216,7 @@ func (store *TMStore) GetTxsRequiringReceiptFetch() ([]*models.Tx, error) {
 	}
 	var txs []*models.Tx
 	for _, account := range accounts {
-		nsTxAddr := tmdb.NewPrefixDB(store.nsTx, account.Address.Bytes())
+		nsTxAddr := tmDB.NewPrefixDB(store.nsTx, account.Address.Bytes())
 		iter, err := nsTxAddr.Iterator(nil, nil)
 		if err != nil {
 			return nil, toCreateIterError(err)
@@ -251,7 +250,7 @@ func (store *TMStore) SetBroadcastBeforeBlockNum(blockNum int64) error {
 	// Get all Txs
 	var txs []*models.Tx
 	for _, account := range accounts {
-		nsTxAddr := tmdb.NewPrefixDB(store.nsTx, account.Address.Bytes())
+		nsTxAddr := tmDB.NewPrefixDB(store.nsTx, account.Address.Bytes())
 		iter, err := nsTxAddr.Iterator(nil, nil)
 		if err != nil {
 			return toCreateIterError(err)
@@ -292,7 +291,7 @@ func (store *TMStore) MarkConfirmedMissingReceipt() error {
 		return err
 	}
 	for _, account := range accounts {
-		nsTxAddr := tmdb.NewPrefixDB(store.nsTx, account.Address.Bytes())
+		nsTxAddr := tmDB.NewPrefixDB(store.nsTx, account.Address.Bytes())
 		// Get max nonce for confirmed Txs
 		iter, err := nsTxAddr.Iterator(nil, nil)
 		if err != nil {
@@ -357,7 +356,7 @@ func (store *TMStore) MarkOldTxsMissingReceiptAsErrored(cutoff int64) error {
 		return err
 	}
 	for _, account := range accounts {
-		nsTxAddr := tmdb.NewPrefixDB(store.nsTx, account.Address.Bytes())
+		nsTxAddr := tmDB.NewPrefixDB(store.nsTx, account.Address.Bytes())
 		// Get max nonce for confirmed Txs
 		iter, err := nsTxAddr.Iterator(nil, nil)
 		if err != nil {
@@ -404,7 +403,7 @@ func (store *TMStore) MarkOldTxsMissingReceiptAsErrored(cutoff int64) error {
 }
 
 func (store *TMStore) GetTxsRequiringNewAttempt(address common.Address, blockNum int64, gasBumpThreshold int64, depth int) ([]*models.Tx, error) {
-	nsTxAddr := tmdb.NewPrefixDB(store.nsTx, address.Bytes())
+	nsTxAddr := tmDB.NewPrefixDB(store.nsTx, address.Bytes())
 	iter, err := nsTxAddr.Iterator(nil, nil)
 	if err != nil {
 		return nil, toCreateIterError(err)
@@ -460,7 +459,7 @@ func (store *TMStore) GetTxsConfirmedAtOrAboveBlockHeight(blockNum int64) ([]*mo
 		return nil, err
 	}
 	for _, account := range accounts {
-		nsTxAddr := tmdb.NewPrefixDB(store.nsTx, account.Address.Bytes())
+		nsTxAddr := tmDB.NewPrefixDB(store.nsTx, account.Address.Bytes())
 		iter, err := nsTxAddr.Iterator(nil, nil)
 		if err != nil {
 			return nil, toCreateIterError(err)
@@ -515,7 +514,7 @@ func (store *TMStore) GetTxsConfirmedAtOrAboveBlockHeight(blockNum int64) ([]*mo
 }
 
 func (store *TMStore) GetInProgressAttempts(address common.Address) ([]*models.TxAttempt, error) {
-	nsTxAddr := tmdb.NewPrefixDB(store.nsTx, address.Bytes())
+	nsTxAddr := tmDB.NewPrefixDB(store.nsTx, address.Bytes())
 	iter, err := nsTxAddr.Iterator(nil, nil)
 	if err != nil {
 		return nil, toCreateIterError(err)

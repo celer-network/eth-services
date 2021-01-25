@@ -12,8 +12,8 @@ import (
 	"github.com/celer-network/eth-services/client"
 	esStore "github.com/celer-network/eth-services/store"
 	"github.com/celer-network/eth-services/store/models"
+	"github.com/google/uuid"
 	pbormanUUID "github.com/pborman/uuid"
-	uuid "github.com/satori/go.uuid"
 
 	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/common"
@@ -79,7 +79,7 @@ func NewTx(t *testing.T, fromAddress common.Address) *models.Tx {
 	t.Helper()
 
 	return &models.Tx{
-		ID:             uuid.NewV4(),
+		ID:             uuid.New(),
 		FromAddress:    fromAddress,
 		ToAddress:      NewAddress(),
 		EncodedPayload: []byte{1, 2, 3},

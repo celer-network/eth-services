@@ -10,7 +10,7 @@ import (
 	esStore "github.com/celer-network/eth-services/store"
 	"github.com/celer-network/eth-services/store/models"
 	"github.com/celer-network/eth-services/types"
-	uuid "github.com/satori/go.uuid"
+	"github.com/google/uuid"
 
 	gethAccounts "github.com/ethereum/go-ethereum/accounts"
 	gethCommon "github.com/ethereum/go-ethereum/common"
@@ -37,7 +37,7 @@ func newAttempt(keyStore client.KeyStoreInterface, config *types.Config, tx *mod
 		return &attempt, errors.Wrapf(err, "error using account %s to sign transaction %v", tx.FromAddress.String(), tx.ID)
 	}
 
-	attempt.ID = uuid.NewV4()
+	attempt.ID = uuid.New()
 	attempt.State = models.TxAttemptStateInProgress
 	attempt.SignedRawTx = signedTxBytes
 	attempt.TxID = tx.ID
@@ -96,7 +96,7 @@ func saveReplacementInProgressAttempt(store esStore.Store, tx *models.Tx, oldAtt
 
 	var newAttempts []models.TxAttempt
 	for _, attempt := range tx.TxAttempts {
-		if !uuid.Equal(attempt.ID, oldAttempt.ID) {
+		if !bytes.Equal(attempt.ID[:], oldAttempt.ID[:]) {
 			newAttempts = append(newAttempts, attempt)
 		}
 	}

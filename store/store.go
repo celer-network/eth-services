@@ -7,7 +7,7 @@ import (
 
 	"github.com/celer-network/eth-services/store/models"
 	"github.com/ethereum/go-ethereum/common"
-	uuid "github.com/satori/go.uuid"
+	"github.com/google/uuid"
 )
 
 var (
@@ -102,4 +102,12 @@ type Store interface {
 	GetTxsConfirmedAtOrAboveBlockHeight(blockNum int64) ([]*models.Tx, error)
 
 	GetInProgressAttempts(address common.Address) ([]*models.TxAttempt, error)
+
+	PutJob(job *models.Job) error
+
+	GetJob(jobID uuid.UUID) (*models.Job, error)
+
+	DeleteJob(jobID uuid.UUID) error
+
+	GetUnhandledJobIDs() ([]uuid.UUID, error)
 }

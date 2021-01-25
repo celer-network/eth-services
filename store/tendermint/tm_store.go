@@ -3,7 +3,7 @@ package tendermint
 import (
 	"github.com/celer-network/eth-services/store"
 	"github.com/pkg/errors"
-	tmdb "github.com/tendermint/tm-db"
+	tmDB "github.com/tendermint/tm-db"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
@@ -14,25 +14,27 @@ const (
 
 // TMStore is a Store implementation using Tendermint tm-db
 type TMStore struct {
-	nsHead    *tmdb.PrefixDB
-	nsAccount *tmdb.PrefixDB
-	nsTx      *tmdb.PrefixDB
+	nsHead    *tmDB.PrefixDB
+	nsAccount *tmDB.PrefixDB
+	nsTx      *tmDB.PrefixDB
+	nsJob     *tmDB.PrefixDB
 }
 
 var _ store.Store = (*TMStore)(nil)
 
 // NewTMStore creates a new TMStore
-func NewTMStore(db tmdb.DB) *TMStore {
+func NewTMStore(db tmDB.DB) *TMStore {
 	return &TMStore{
-		nsHead:    tmdb.NewPrefixDB(db, prefixHead),
-		nsAccount: tmdb.NewPrefixDB(db, prefixAccount),
-		nsTx:      tmdb.NewPrefixDB(db, prefixTx),
+		nsHead:    tmDB.NewPrefixDB(db, prefixHead),
+		nsAccount: tmDB.NewPrefixDB(db, prefixAccount),
+		nsTx:      tmDB.NewPrefixDB(db, prefixTx),
+		nsJob:     tmDB.NewPrefixDB(db, prefixJob),
 	}
 }
 
 // get will retrieve the binary data under the given key from the DB and decode it into the given
 // entity. The provided entity needs to be a pointer to an initialized entity of the correct type.
-func get(db tmdb.DB, key []byte, entity interface{}) error {
+func get(db tmDB.DB, key []byte, entity interface{}) error {
 	value, err := db.Get(key)
 	if err != nil {
 		return errors.Wrap(err, "could not get data")
@@ -49,7 +51,7 @@ func get(db tmdb.DB, key []byte, entity interface{}) error {
 
 // set will encode the given entity using MessagePack and will insert the resulting binary data in
 // the DB under the provided key.
-func set(db tmdb.DB, key []byte, entity interface{}) error {
+func set(db tmDB.DB, key []byte, entity interface{}) error {
 	val, err := msgpack.Marshal(entity)
 	if err != nil {
 		return errors.Wrap(err, "could not encode entity")

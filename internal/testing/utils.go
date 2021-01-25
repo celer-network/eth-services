@@ -12,7 +12,7 @@ import (
 	"github.com/celer-network/eth-services/store/tendermint"
 	"github.com/celer-network/eth-services/types"
 	"github.com/stretchr/testify/require"
-	tmdb "github.com/tendermint/tm-db"
+	tmDB "github.com/tendermint/tm-db"
 	"go.uber.org/zap"
 )
 
@@ -20,7 +20,7 @@ import (
 func NewStore(t testing.TB) store.Store {
 	t.Helper()
 
-	return tendermint.NewTMStore(tmdb.NewMemDB())
+	return tendermint.NewTMStore(tmDB.NewMemDB())
 }
 
 // NewConfig creates a new Config for testing

@@ -7,8 +7,8 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
-	uuid "github.com/satori/go.uuid"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -18,6 +18,7 @@ import (
 
 type TxState string
 type TxAttemptState string
+type JobState string
 
 const (
 	TxStateUnstarted               = TxState("unstarted")
@@ -30,6 +31,9 @@ const (
 	TxAttemptStateInProgress      = TxAttemptState("in_progress")
 	TxAttemptStateInsufficientEth = TxAttemptState("insufficient_eth")
 	TxAttemptStateBroadcast       = TxAttemptState("broadcast")
+
+	JobStateUnhandled = JobState("unhandled")
+	JobStateHandled   = JobState("handled")
 )
 
 type Account struct {
@@ -39,6 +43,14 @@ type Account struct {
 	// Conceptually equivalent to geth's `PendingNonceAt` but more reliable
 	// because we have a better view of our own transactions
 	NextNonce int64
+}
+
+type Job struct {
+	ID            uuid.UUID
+	TxFromAddress common.Address
+	TxID          uuid.UUID
+	Metadata      []byte
+	State         JobState
 }
 
 type Tx struct {

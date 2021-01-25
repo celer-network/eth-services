@@ -1,6 +1,7 @@
 package txmanager
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -17,8 +18,8 @@ import (
 	gethCommon "github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	gethTypes "github.com/ethereum/go-ethereum/core/types"
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
-	uuid "github.com/satori/go.uuid"
 	"go.uber.org/multierr"
 )
 
@@ -28,19 +29,19 @@ var (
 	ErrCouldNotGetReceipt = "could not get receipt"
 )
 
-type EthConfirmer interface {
+type TxConfirmer interface {
 	subscription.HeadTrackable
 
 	GetTx(fromAddress gethCommon.Address, txID uuid.UUID) (*models.Tx, error)
 }
 
-// EthConfirmer is a broad service which performs four different tasks in sequence on every new longest chain
+// TxConfirmer is a broad service which performs four different tasks in sequence on every new longest chain
 // Step 1: Mark that all currently pending transaction attempts were broadcast before this block
 // Step 2: Check pending transactions for receipts
 // Step 3: See if any transactions have exceeded the gas bumping block threshold and, if so, bump them
 // Step 4: Check confirmed transactions to make sure they are still in the longest chain (reorg protection)
 
-type ethConfirmer struct {
+type txConfirmer struct {
 	ethClient client.Client
 	store     esStore.Store
 	keyStore  client.KeyStoreInterface
@@ -50,12 +51,12 @@ type ethConfirmer struct {
 	lock sync.Mutex
 }
 
-func NewEthConfirmer(
+func NewTxConfirmer(
 	ethClient client.Client,
 	store esStore.Store,
 	keyStore client.KeyStoreInterface,
-	config *types.Config) EthConfirmer {
-	return &ethConfirmer{
+	config *types.Config) TxConfirmer {
+	return &txConfirmer{
 		ethClient: ethClient,
 		store:     store,
 		keyStore:  keyStore,
@@ -64,64 +65,64 @@ func NewEthConfirmer(
 	}
 }
 
-var _ EthConfirmer = (*ethConfirmer)(nil)
+var _ TxConfirmer = (*txConfirmer)(nil)
 
-func (ec *ethConfirmer) GetTx(fromAddress gethCommon.Address, txID uuid.UUID) (*models.Tx, error) {
-	return ec.store.GetTx(fromAddress, txID)
+func (tc *txConfirmer) GetTx(fromAddress gethCommon.Address, txID uuid.UUID) (*models.Tx, error) {
+	return tc.store.GetTx(fromAddress, txID)
 }
 
 // Do nothing on connect, simply wait for the next head
-func (ec *ethConfirmer) Connect(*models.Head) error {
+func (tc *txConfirmer) Connect(*models.Head) error {
 	return nil
 }
 
-func (ec *ethConfirmer) Disconnect() {
+func (tc *txConfirmer) Disconnect() {
 	// pass
 }
 
-func (ec *ethConfirmer) OnNewLongestChain(ctx context.Context, head models.Head) {
-	if err := ec.ProcessHead(ctx, head); err != nil {
-		ec.logger.Errorw("EthConfirmer error",
+func (tc *txConfirmer) OnNewLongestChain(ctx context.Context, head models.Head) {
+	if err := tc.ProcessHead(ctx, head); err != nil {
+		tc.logger.Errorw("TxConfirmer error",
 			"err", err,
 		)
 	}
 }
 
 // ProcessHead takes all required transactions for the confirmer on a new head
-func (ec *ethConfirmer) ProcessHead(ctx context.Context, head models.Head) error {
-	ec.lock.Lock()
-	defer ec.lock.Unlock()
-	return ec.processHead(ctx, head)
+func (tc *txConfirmer) ProcessHead(ctx context.Context, head models.Head) error {
+	tc.lock.Lock()
+	defer tc.lock.Unlock()
+	return tc.processHead(ctx, head)
 }
 
 // NOTE: This SHOULD NOT be run concurrently or it could behave badly
-func (ec *ethConfirmer) processHead(ctx context.Context, head models.Head) error {
-	if err := ec.store.SetBroadcastBeforeBlockNum(head.Number); err != nil {
+func (tc *txConfirmer) processHead(ctx context.Context, head models.Head) error {
+	if err := tc.store.SetBroadcastBeforeBlockNum(head.Number); err != nil {
 		return errors.Wrap(err, "SetBroadcastBeforeBlockNum failed")
 	}
 
 	mark := time.Now()
 
-	if err := ec.CheckForReceipts(ctx, head.Number); err != nil {
+	if err := tc.CheckForReceipts(ctx, head.Number); err != nil {
 		return errors.Wrap(err, "CheckForReceipts failed")
 	}
 
-	ec.logger.Debugw("EthConfirmer: finished CheckForReceipts",
+	tc.logger.Debugw("TxConfirmer: finished CheckForReceipts",
 		"headNum", head.Number,
 		"time", time.Since(mark),
 		"id", "eth_confirmer",
 	)
 	mark = time.Now()
 
-	accounts, err := ec.store.GetAccounts()
+	accounts, err := tc.store.GetAccounts()
 	if err != nil {
 		return errors.Wrap(err, "could not fetch keys")
 	}
-	if err := ec.BumpGasWhereNecessary(ctx, accounts, head.Number); err != nil {
+	if err := tc.BumpGasWhereNecessary(ctx, accounts, head.Number); err != nil {
 		return errors.Wrap(err, "BumpGasWhereNecessary failed")
 	}
 
-	ec.logger.Debugw("EthConfirmer: finished BumpGasWhereNecessary",
+	tc.logger.Debugw("TxConfirmer: finished BumpGasWhereNecessary",
 		"headNum", head.Number,
 		"time", time.Since(mark),
 		"id", "eth_confirmer",
@@ -129,22 +130,22 @@ func (ec *ethConfirmer) processHead(ctx context.Context, head models.Head) error
 	mark = time.Now()
 
 	defer func() {
-		ec.logger.Debugw("EthConfirmer: finished EnsureConfirmedTransactionsInLongestChain",
+		tc.logger.Debugw("TxConfirmer: finished EnsureConfirmedTransactionsInLongestChain",
 			"headNum", head.Number,
 			"time", time.Since(mark),
 			"id", "eth_confirmer",
 		)
 	}()
 
-	return errors.Wrap(ec.EnsureConfirmedTxsInLongestChain(ctx, accounts, &head), "EnsureConfirmedTransactionsInLongestChain failed")
+	return errors.Wrap(tc.EnsureConfirmedTxsInLongestChain(ctx, accounts, &head), "EnsureConfirmedTransactionsInLongestChain failed")
 }
 
 // receiptFetcherWorkerCount is the max number of concurrently executing
 // workers that will fetch receipts for eth transactions
 const receiptFetcherWorkerCount = 10
 
-func (ec *ethConfirmer) CheckForReceipts(ctx context.Context, blockNum int64) error {
-	txs, err := ec.store.GetTxsRequiringReceiptFetch()
+func (tc *txConfirmer) CheckForReceipts(ctx context.Context, blockNum int64) error {
+	txs, err := tc.store.GetTxsRequiringReceiptFetch()
 	if err != nil {
 		return errors.Wrap(err, "getTxsRequiringReceiptFetch failed")
 	}
@@ -152,27 +153,27 @@ func (ec *ethConfirmer) CheckForReceipts(ctx context.Context, blockNum int64) er
 		return nil
 	}
 
-	ec.logger.Debugf("EthConfirmer: fetching receipt for %v transactions", len(txs))
+	tc.logger.Debugf("TxConfirmer: fetching receipt for %v transactions", len(txs))
 
-	ec.concurrentlyFetchReceipts(ctx, txs)
+	tc.concurrentlyFetchReceipts(ctx, txs)
 
-	if err := ec.store.MarkConfirmedMissingReceipt(); err != nil {
+	if err := tc.store.MarkConfirmedMissingReceipt(); err != nil {
 		return errors.Wrap(err, "unable to mark Txs as 'confirmed_missing_receipt'")
 	}
 
-	if err := ec.markOldTxsMissingReceiptAsErrored(ctx, blockNum); err != nil {
+	if err := tc.markOldTxsMissingReceiptAsErrored(ctx, blockNum); err != nil {
 		return errors.Wrap(err, "unable to confirm buried unconfirmed Txes")
 	}
 
 	return nil
 }
 
-func (ec *ethConfirmer) concurrentlyFetchReceipts(ctx context.Context, txs []*models.Tx) {
+func (tc *txConfirmer) concurrentlyFetchReceipts(ctx context.Context, txs []*models.Tx) {
 	var wg sync.WaitGroup
 	wg.Add(receiptFetcherWorkerCount)
 	chTxs := make(chan *models.Tx)
 	for i := 0; i < receiptFetcherWorkerCount; i++ {
-		go ec.fetchReceipts(ctx, chTxs, &wg)
+		go tc.fetchReceipts(ctx, chTxs, &wg)
 	}
 	for _, tx := range txs {
 		chTxs <- tx
@@ -182,7 +183,7 @@ func (ec *ethConfirmer) concurrentlyFetchReceipts(ctx context.Context, txs []*mo
 
 }
 
-func (ec *ethConfirmer) fetchReceipts(ctx context.Context, chTxs <-chan *models.Tx, wg *sync.WaitGroup) {
+func (tc *txConfirmer) fetchReceipts(ctx context.Context, chTxs <-chan *models.Tx, wg *sync.WaitGroup) {
 	defer wg.Done()
 	for {
 		tx, ok := <-chTxs
@@ -193,45 +194,45 @@ func (ec *ethConfirmer) fetchReceipts(ctx context.Context, chTxs <-chan *models.
 			// NOTE: This could conceivably be optimized even further at the
 			// expense of slightly higher load for the remote eth node, by
 			// batch requesting all receipts at once
-			receipt, err := ec.fetchReceipt(ctx, attempt.Hash)
+			receipt, err := tc.fetchReceipt(ctx, attempt.Hash)
 			if client.IsParityQueriedReceiptTooEarly(err) || (receipt != nil && receipt.BlockNumber == nil) {
-				ec.logger.Debugw("EthConfirmer#fetchReceipts: got receipt for transaction but it's still in the mempool and not included in a block yet",
+				tc.logger.Debugw("TxConfirmer#fetchReceipts: got receipt for transaction but it's still in the mempool and not included in a block yet",
 					"txHash", attempt.Hash.Hex(),
 				)
 				break
 			} else if err != nil {
-				ec.logger.Errorw("EthConfirmer#fetchReceipts: fetchReceipt failed",
+				tc.logger.Errorw("TxConfirmer#fetchReceipts: fetchReceipt failed",
 					"txHash", attempt.Hash.Hex(),
 					"err", err,
 				)
 				break
 			}
 			if receipt != nil {
-				ec.logger.Debugw("EthConfirmer#fetchReceipts: got receipt for transaction",
+				tc.logger.Debugw("TxConfirmer#fetchReceipts: got receipt for transaction",
 					"txHash", attempt.Hash.Hex(),
 					"blockNumber", receipt.BlockNumber,
 				)
 				if receipt.TxHash != attempt.Hash {
-					ec.logger.Errorf("EthConfirmer#fetchReceipts: invariant violation, expected receipt with hash %s to have same hash as attempt with hash %s", receipt.TxHash.Hex(), attempt.Hash.Hex())
+					tc.logger.Errorf("TxConfirmer#fetchReceipts: invariant violation, expected receipt with hash %s to have same hash as attempt with hash %s", receipt.TxHash.Hex(), attempt.Hash.Hex())
 					break
 				}
 				serializedReceipt, err := serializeReceipt(receipt)
 				if err != nil {
-					ec.logger.Errorw("EthConfirmer#fetchReceipts: serializeReceipt failed",
+					tc.logger.Errorw("TxConfirmer#fetchReceipts: serializeReceipt failed",
 						"err", err,
 					)
 				}
 				tx.TxAttempts[i].Receipts = append(tx.TxAttempts[i].Receipts, *serializedReceipt)
 				tx.State = models.TxStateConfirmed
-				err = ec.store.PutTx(tx)
+				err = tc.store.PutTx(tx)
 				if err != nil {
-					ec.logger.Errorw("EthConfirmer#fetchReceipts: saveReceipt failed",
+					tc.logger.Errorw("TxConfirmer#fetchReceipts: saveReceipt failed",
 						"err", err,
 					)
 				}
 				break
 			} else {
-				ec.logger.Debugw("EthConfirmer#fetchReceipts: still waiting for receipt",
+				tc.logger.Debugw("TxConfirmer#fetchReceipts: still waiting for receipt",
 					"txHash", attempt.Hash.Hex(),
 					"txAttemptID", attempt.ID,
 					"txID", tx.ID,
@@ -241,10 +242,10 @@ func (ec *ethConfirmer) fetchReceipts(ctx context.Context, chTxs <-chan *models.
 	}
 }
 
-func (ec *ethConfirmer) fetchReceipt(ctx context.Context, hash gethCommon.Hash) (*gethTypes.Receipt, error) {
+func (tc *txConfirmer) fetchReceipt(ctx context.Context, hash gethCommon.Hash) (*gethTypes.Receipt, error) {
 	ctx, cancel := context.WithTimeout(ctx, maxEthNodeRequestTime)
 	defer cancel()
-	receipt, err := ec.ethClient.TransactionReceipt(ctx, hash)
+	receipt, err := tc.ethClient.TransactionReceipt(ctx, hash)
 	if err != nil && err.Error() == "not found" {
 		return nil, nil
 	}
@@ -269,16 +270,16 @@ func serializeReceipt(receipt *gethTypes.Receipt) (*models.Receipt, error) {
 	return &serializedReceipt, nil
 }
 
-func (ec *ethConfirmer) markOldTxsMissingReceiptAsErrored(ctx context.Context, blockNum int64) error {
-	cutoff := blockNum - ec.config.FinalityDepth
+func (tc *txConfirmer) markOldTxsMissingReceiptAsErrored(ctx context.Context, blockNum int64) error {
+	cutoff := blockNum - tc.config.FinalityDepth
 	if cutoff <= 0 {
 		return nil
 	}
 	// TODO: log missing receipt error?
-	return ec.store.MarkOldTxsMissingReceiptAsErrored(cutoff)
+	return tc.store.MarkOldTxsMissingReceiptAsErrored(cutoff)
 }
 
-func (ec *ethConfirmer) BumpGasWhereNecessary(ctx context.Context, accounts []*models.Account, blockHeight int64) error {
+func (tc *txConfirmer) BumpGasWhereNecessary(ctx context.Context, accounts []*models.Account, blockHeight int64) error {
 	var wg sync.WaitGroup
 
 	// It is safe to process separate accounts concurrently
@@ -288,11 +289,11 @@ func (ec *ethConfirmer) BumpGasWhereNecessary(ctx context.Context, accounts []*m
 	var errMu sync.Mutex
 	for _, account := range accounts {
 		go func(fromAddress gethCommon.Address) {
-			if err := ec.bumpGasWhereNecessary(ctx, fromAddress, blockHeight); err != nil {
+			if err := tc.bumpGasWhereNecessary(ctx, fromAddress, blockHeight); err != nil {
 				errMu.Lock()
 				errors = append(errors, err)
 				errMu.Unlock()
-				ec.logger.Errorw("Error in BumpGasWhereNecessary",
+				tc.logger.Errorw("Error in BumpGasWhereNecessary",
 					"error", err,
 					"fromAddress", fromAddress,
 				)
@@ -306,31 +307,31 @@ func (ec *ethConfirmer) BumpGasWhereNecessary(ctx context.Context, accounts []*m
 	return multierr.Combine(errors...)
 }
 
-func (ec *ethConfirmer) bumpGasWhereNecessary(ctx context.Context, address gethCommon.Address, blockHeight int64) error {
-	if err := ec.handleAllInProgressAttempts(ctx, address, blockHeight); err != nil {
+func (tc *txConfirmer) bumpGasWhereNecessary(ctx context.Context, address gethCommon.Address, blockHeight int64) error {
+	if err := tc.handleAllInProgressAttempts(ctx, address, blockHeight); err != nil {
 		return errors.Wrap(err, "handleAllInProgressAttempts failed")
 	}
 
-	threshold := ec.config.GasBumpThreshold
-	depth := ec.config.GasBumpTxDepth
-	txs, err := ec.store.GetTxsRequiringNewAttempt(address, blockHeight, threshold, depth)
+	threshold := tc.config.GasBumpThreshold
+	depth := tc.config.GasBumpTxDepth
+	txs, err := tc.store.GetTxsRequiringNewAttempt(address, blockHeight, threshold, depth)
 	if err != nil {
 		return errors.Wrap(err, "GetTxsRequiringNewAttempt failed")
 	}
 	if len(txs) > 0 {
-		ec.logger.Debugf("EthConfirmer: Bumping gas for %v transactions", len(txs))
+		tc.logger.Debugf("TxConfirmer: Bumping gas for %v transactions", len(txs))
 	}
 	for _, tx := range txs {
-		attempt, err := ec.newAttemptWithGasBump(tx)
+		attempt, err := tc.newAttemptWithGasBump(tx)
 		if err != nil {
 			return errors.Wrap(err, "newAttemptWithGasBump failed")
 		}
 
-		if err := ec.saveInProgressAttempt(tx, attempt); err != nil {
+		if err := tc.saveInProgressAttempt(tx, attempt); err != nil {
 			return errors.Wrap(err, "saveInProgressAttempt failed")
 		}
 
-		if err := ec.handleInProgressAttempt(ctx, tx, attempt, blockHeight); err != nil {
+		if err := tc.handleInProgressAttempt(ctx, tx, attempt, blockHeight); err != nil {
 			return errors.Wrap(err, "handleInProgressTxAttempt failed")
 		}
 	}
@@ -340,24 +341,24 @@ func (ec *ethConfirmer) bumpGasWhereNecessary(ctx context.Context, address gethC
 // handleAllInProgressAttempts handles "in_progress" attempts were left behind after a
 // crash/restart and may or may not have been sent. Ensure they get on-chain so we can fetch a
 // receipt.
-func (ec *ethConfirmer) handleAllInProgressAttempts(ctx context.Context, address gethCommon.Address, blockHeight int64) error {
-	attempts, err := ec.store.GetInProgressAttempts(address)
+func (tc *txConfirmer) handleAllInProgressAttempts(ctx context.Context, address gethCommon.Address, blockHeight int64) error {
+	attempts, err := tc.store.GetInProgressAttempts(address)
 	if err != nil {
 		return errors.Wrap(err, "GetInProgressTxAttempts failed")
 	}
 	for _, attempt := range attempts {
-		tx, err := ec.store.GetTx(address, attempt.TxID)
+		tx, err := tc.store.GetTx(address, attempt.TxID)
 		if err != nil {
 			return errors.Wrap(err, "handleInProgressAttempt cannot get tx")
 		}
-		if err := ec.handleInProgressAttempt(ctx, tx, attempt, blockHeight); err != nil {
+		if err := tc.handleInProgressAttempt(ctx, tx, attempt, blockHeight); err != nil {
 			return errors.Wrap(err, "handleInProgressAttempt failed")
 		}
 	}
 	return nil
 }
 
-func (ec *ethConfirmer) newAttemptWithGasBump(tx *models.Tx) (attempt *models.TxAttempt, err error) {
+func (tc *txConfirmer) newAttemptWithGasBump(tx *models.Tx) (attempt *models.TxAttempt, err error) {
 	var bumpedGasPrice *big.Int
 	numAttempts := len(tx.TxAttempts)
 	if numAttempts > 0 {
@@ -369,14 +370,14 @@ func (ec *ethConfirmer) newAttemptWithGasBump(tx *models.Tx) (attempt *models.Tx
 			return &previousAttempt, nil
 		}
 		previousGasPrice := previousAttempt.GasPrice
-		bumpedGasPrice, err = BumpGas(ec.config, previousGasPrice)
+		bumpedGasPrice, err = BumpGas(tc.config, previousGasPrice)
 		if err != nil {
-			ec.logger.Errorw("Failed to bump gas",
+			tc.logger.Errorw("Failed to bump gas",
 				"err", err,
 				"txID", tx.ID,
 				"txHash", attempt.Hash,
 				"originalGasPrice", previousGasPrice.String(),
-				"maxGasPrice", ec.config.MaxGasPrice,
+				"maxGasPrice", tc.config.MaxGasPrice,
 			)
 			// Do not create a new attempt if bumping gas would put us over the limit or cause some other problem
 			// Instead try to resubmit the previous attempt, and keep resubmitting until its accepted
@@ -385,49 +386,49 @@ func (ec *ethConfirmer) newAttemptWithGasBump(tx *models.Tx) (attempt *models.Tx
 			return &previousAttempt, nil
 		}
 	} else {
-		ec.logger.Errorf("Invariant violation: Tx %v was unconfirmed but didn't have any attempts. "+
+		tc.logger.Errorf("Invariant violation: Tx %v was unconfirmed but didn't have any attempts. "+
 			"Falling back to default gas price instead.", tx.ID)
-		bumpedGasPrice = ec.config.DefaultGasPrice
+		bumpedGasPrice = tc.config.DefaultGasPrice
 	}
-	return newAttempt(ec.keyStore, ec.config, tx, bumpedGasPrice)
+	return newAttempt(tc.keyStore, tc.config, tx, bumpedGasPrice)
 }
 
-func (ec *ethConfirmer) saveInProgressAttempt(tx *models.Tx, attempt *models.TxAttempt) error {
+func (tc *txConfirmer) saveInProgressAttempt(tx *models.Tx, attempt *models.TxAttempt) error {
 	if attempt.State != models.TxAttemptStateInProgress {
 		return errors.New("saveInProgressAttempt failed: attempt state must be in_progress")
 	}
-	return ec.saveAttempt(tx, attempt)
+	return tc.saveAttempt(tx, attempt)
 }
 
-func (ec *ethConfirmer) handleInProgressAttempt(ctx context.Context, tx *models.Tx, attempt *models.TxAttempt, blockHeight int64) error {
+func (tc *txConfirmer) handleInProgressAttempt(ctx context.Context, tx *models.Tx, attempt *models.TxAttempt, blockHeight int64) error {
 	if attempt.State != models.TxAttemptStateInProgress {
 		return errors.Errorf("invariant violation: expected TxAttempt %v to be in_progress, it was %s", attempt.ID, attempt.State)
 	}
 
-	sendError := sendTransaction(ctx, ec.ethClient, attempt, ec.logger)
+	sendError := sendTransaction(ctx, tc.ethClient, attempt, tc.logger)
 
 	if sendError.IsTerminallyUnderpriced() {
 		// This should really not ever happen in normal operation since we
-		// already bumped above the required minimum in EthBroadcaster.
+		// already bumped above the required minimum in TxBroadcaster.
 		//
 		// It could conceivably happen if the remote eth node changed it's configuration.
-		bumpedGasPrice, err := BumpGas(ec.config, attempt.GasPrice)
+		bumpedGasPrice, err := BumpGas(tc.config, attempt.GasPrice)
 		if err != nil {
 			return errors.Wrap(err, "could not bump gas for terminally underpriced transaction")
 		}
-		ec.logger.Errorf("gas price %v wei was rejected by the eth node for being too low. "+
+		tc.logger.Errorf("gas price %v wei was rejected by the eth node for being too low. "+
 			"Eth node returned: '%s'. "+
 			"Bumping to %v wei and retrying. "+
 			"ACTION REQUIRED: You should consider increasing DefaultGasPrice", attempt.GasPrice, sendError.Error(), bumpedGasPrice)
-		replacementAttempt, err := newAttempt(ec.keyStore, ec.config, tx, bumpedGasPrice)
+		replacementAttempt, err := newAttempt(tc.keyStore, tc.config, tx, bumpedGasPrice)
 		if err != nil {
 			return errors.Wrap(err, "newAttempt failed")
 		}
 
-		if err := saveReplacementInProgressAttempt(ec.store, tx, attempt, replacementAttempt); err != nil {
+		if err := saveReplacementInProgressAttempt(tc.store, tx, attempt, replacementAttempt); err != nil {
 			return errors.Wrap(err, "saveReplacementInProgressAttempt failed")
 		}
-		return ec.handleInProgressAttempt(ctx, tx, replacementAttempt, blockHeight)
+		return tc.handleInProgressAttempt(ctx, tx, replacementAttempt, blockHeight)
 	}
 
 	if sendError.IsTemporarilyUnderpriced() {
@@ -437,7 +438,7 @@ func (ec *ethConfirmer) handleInProgressAttempt(ctx context.Context, tx *models.
 		// In that case, the safest thing to do is to pretend the transaction
 		// was accepted and continue the normal gas bumping cycle until we can
 		// get it into the mempool
-		ec.logger.Infow("EthConfirmer: Transaction temporarily underpriced",
+		tc.logger.Infow("TxConfirmer: Transaction temporarily underpriced",
 			"txID", tx.ID,
 			"attemptID", attempt.ID,
 			"err", sendError.Error(),
@@ -447,17 +448,17 @@ func (ec *ethConfirmer) handleInProgressAttempt(ctx context.Context, tx *models.
 	}
 
 	if sendError.Fatal() {
-		// This is an invariant violation. The EthBroadcaster can never create an TxAttempt that
+		// This is an invariant violation. The TxBroadcaster can never create an TxAttempt that
 		// will fatally error. The only scenario imaginable where this might take place is if
 		// geth / parity have been updated between broadcasting and confirming steps.
-		ec.logger.Errorw("invariant violation: fatal error while re-attempting transaction",
+		tc.logger.Errorw("invariant violation: fatal error while re-attempting transaction",
 			"txID", tx.ID,
 			"err", sendError,
 			"signedRawTx", hexutil.Encode(attempt.SignedRawTx),
 			"blockHeight", blockHeight,
 		)
 		// This will loop continuously on every new head so it must be handled manually.
-		return ec.deleteInProgressAttempt(tx, attempt)
+		return tc.deleteInProgressAttempt(tx, attempt)
 	}
 
 	if sendError.IsNonceTooLowError() {
@@ -479,27 +480,27 @@ func (ec *ethConfirmer) handleInProgressAttempt(ctx context.Context, tx *models.
 		// In this case the simplest and most robust way to recover is to ignore
 		// this attempt and wait until the next bump threshold is reached in
 		// order to bump again.
-		ec.logger.Errorw(fmt.Sprintf("EthConfirmer: replacement transaction underpriced at %v wei for Tx %v. "+
+		tc.logger.Errorw(fmt.Sprintf("TxConfirmer: replacement transaction underpriced at %v wei for Tx %v. "+
 			"Eth node returned error: '%s'. "+
 			"Either you have set ETH_GAS_BUMP_PERCENT (currently %v%%) too low or an external wallet used this account. "+
 			"Please note that using your node's private keys outside of eth-service is NOT SUPPORTED and can lead to missed transactions.",
-			attempt.GasPrice.Int64(), tx.ID, sendError.Error(), ec.config.GasBumpPercent), "err", sendError)
+			attempt.GasPrice.Int64(), tx.ID, sendError.Error(), tc.config.GasBumpPercent), "err", sendError)
 
 		// Assume success and hand off to the next cycle.
 		sendError = nil
 	}
 
 	if sendError.IsInsufficientEth() {
-		ec.logger.Errorw(fmt.Sprintf("EthConfirmer: TxAttempt %v (hash 0x%x) at gas price (%s Wei) was rejected due to insufficient eth. "+
+		tc.logger.Errorw(fmt.Sprintf("TxConfirmer: TxAttempt %v (hash 0x%x) at gas price (%s Wei) was rejected due to insufficient eth. "+
 			"The eth node returned %s. "+
 			"ACTION REQUIRED: Wallet with address 0x%x is OUT OF FUNDS",
 			attempt.ID, attempt.Hash, attempt.GasPrice.String(), sendError.Error(), tx.FromAddress,
 		), "err", sendError)
-		return ec.saveInsufficientEthAttempt(tx, attempt)
+		return tc.saveInsufficientEthAttempt(tx, attempt)
 	}
 
 	if sendError == nil {
-		return ec.saveSentAttempt(tx, attempt)
+		return tc.saveSentAttempt(tx, attempt)
 	}
 
 	// Any other type of error is considered temporary or resolvable manually. The node may have it
@@ -508,33 +509,33 @@ func (ec *ethConfirmer) handleInProgressAttempt(ctx context.Context, tx *models.
 	return errors.Wrapf(sendError, "unexpected error sending Tx %v with hash %s", tx.ID, attempt.Hash.Hex())
 }
 
-func (ec *ethConfirmer) deleteInProgressAttempt(tx *models.Tx, attempt *models.TxAttempt) error {
+func (tc *txConfirmer) deleteInProgressAttempt(tx *models.Tx, attempt *models.TxAttempt) error {
 	if attempt.State != models.TxAttemptStateInProgress {
 		return errors.New("deleteInProgressAttempt: expected attempt state to be in_progress")
 	}
-	return ec.deleteAttempt(tx, attempt)
+	return tc.deleteAttempt(tx, attempt)
 }
 
-func (ec *ethConfirmer) saveSentAttempt(tx *models.Tx, attempt *models.TxAttempt) error {
+func (tc *txConfirmer) saveSentAttempt(tx *models.Tx, attempt *models.TxAttempt) error {
 	if attempt.State != models.TxAttemptStateInProgress {
 		return errors.New("expected state to be in_progress")
 	}
 	attempt.State = models.TxAttemptStateBroadcast
-	return ec.saveAttempt(tx, attempt)
+	return tc.saveAttempt(tx, attempt)
 }
 
-func (ec *ethConfirmer) saveInsufficientEthAttempt(tx *models.Tx, attempt *models.TxAttempt) error {
+func (tc *txConfirmer) saveInsufficientEthAttempt(tx *models.Tx, attempt *models.TxAttempt) error {
 	if !(attempt.State == models.TxAttemptStateInProgress || attempt.State == models.TxAttemptStateInsufficientEth) {
 		return errors.New("expected state to be either in_progress or insufficient_eth")
 	}
 	attempt.State = models.TxAttemptStateInsufficientEth
-	return ec.saveAttempt(tx, attempt)
+	return tc.saveAttempt(tx, attempt)
 }
 
-func (ec *ethConfirmer) saveAttempt(tx *models.Tx, attempt *models.TxAttempt) error {
+func (tc *txConfirmer) saveAttempt(tx *models.Tx, attempt *models.TxAttempt) error {
 	appendAttempt := true
 	for i, currAttempt := range tx.TxAttempts {
-		if uuid.Equal(currAttempt.ID, attempt.ID) {
+		if bytes.Equal(currAttempt.ID[:], attempt.ID[:]) {
 			appendAttempt = false
 			tx.TxAttempts[i] = *attempt
 			break
@@ -543,13 +544,13 @@ func (ec *ethConfirmer) saveAttempt(tx *models.Tx, attempt *models.TxAttempt) er
 	if appendAttempt {
 		tx.TxAttempts = append(tx.TxAttempts, *attempt)
 	}
-	return errors.Wrap(ec.store.PutTx(tx), "saveAttempt failed")
+	return errors.Wrap(tc.store.PutTx(tx), "saveAttempt failed")
 }
 
-func (ec *ethConfirmer) deleteAttempt(tx *models.Tx, attempt *models.TxAttempt) error {
+func (tc *txConfirmer) deleteAttempt(tx *models.Tx, attempt *models.TxAttempt) error {
 	index := -1
 	for i, currAttempt := range tx.TxAttempts {
-		if uuid.Equal(currAttempt.ID, attempt.ID) {
+		if bytes.Equal(currAttempt.ID[:], attempt.ID[:]) {
 			index = i
 			break
 		}
@@ -557,7 +558,7 @@ func (ec *ethConfirmer) deleteAttempt(tx *models.Tx, attempt *models.TxAttempt) 
 	if index != -1 {
 		copy(tx.TxAttempts[index:], tx.TxAttempts[index+1:])
 		tx.TxAttempts = tx.TxAttempts[:len(tx.TxAttempts)-1]
-		return errors.Wrap(ec.store.PutTx(tx), "deleteAttempt failed")
+		return errors.Wrap(tc.store.PutTx(tx), "deleteAttempt failed")
 	}
 	return errors.New("deleteAttempt: attempt not found")
 }
@@ -568,15 +569,15 @@ func (ec *ethConfirmer) deleteAttempt(tx *models.Tx, attempt *models.TxAttempt) 
 //
 // If any of the confirmed transactions does not have a receipt in the chain, it has been
 // re-org'd out and will be rebroadcast.
-func (ec *ethConfirmer) EnsureConfirmedTxsInLongestChain(ctx context.Context, accounts []*models.Account, head *models.Head) error {
-	txs, err := ec.store.GetTxsConfirmedAtOrAboveBlockHeight(head.EarliestInChain().Number)
+func (tc *txConfirmer) EnsureConfirmedTxsInLongestChain(ctx context.Context, accounts []*models.Account, head *models.Head) error {
+	txs, err := tc.store.GetTxsConfirmedAtOrAboveBlockHeight(head.EarliestInChain().Number)
 	if err != nil {
 		return errors.Wrap(err, "getTxsConfirmedAtOrAboveBlockHeight failed")
 	}
 
 	for _, tx := range txs {
 		if !hasReceiptInLongestChain(tx, head) {
-			if err := ec.markForRebroadcast(tx); err != nil {
+			if err := tc.markForRebroadcast(tx); err != nil {
 				return errors.Wrapf(err, "markForRebroadcast failed for tx %v", tx.ID)
 			}
 		}
@@ -590,11 +591,11 @@ func (ec *ethConfirmer) EnsureConfirmedTxsInLongestChain(ctx context.Context, ac
 	wg.Add(len(accounts))
 	for _, account := range accounts {
 		go func(fromAddress gethCommon.Address) {
-			if err := ec.handleAllInProgressAttempts(ctx, fromAddress, head.Number); err != nil {
+			if err := tc.handleAllInProgressAttempts(ctx, fromAddress, head.Number); err != nil {
 				errMu.Lock()
 				errors = append(errors, err)
 				errMu.Unlock()
-				ec.logger.Errorw("Error in BumpGasWhereNecessary", "error", err, "fromAddress", fromAddress)
+				tc.logger.Errorw("Error in BumpGasWhereNecessary", "error", err, "fromAddress", fromAddress)
 			}
 
 			wg.Done()
@@ -622,7 +623,7 @@ func hasReceiptInLongestChain(tx *models.Tx, head *models.Head) bool {
 	}
 }
 
-func (ec *ethConfirmer) markForRebroadcast(tx *models.Tx) error {
+func (tc *txConfirmer) markForRebroadcast(tx *models.Tx) error {
 	numAttempts := len(tx.TxAttempts)
 	if numAttempts == 0 {
 		return errors.Errorf("invariant violation: expected Tx %v to have at least one attempt", tx.ID)
@@ -641,7 +642,7 @@ func (ec *ethConfirmer) markForRebroadcast(tx *models.Tx) error {
 	if err != nil {
 		return errors.Wrapf(err, "unbroadcastAttempt failed for tx %v", tx.ID)
 	}
-	err = ec.store.PutTx(tx)
+	err = tc.store.PutTx(tx)
 	return errors.Wrap(err, "markForRebroadcast failed")
 }
 
@@ -664,7 +665,7 @@ func unbroadcastAttempt(tx *models.Tx, attempt *models.TxAttempt) error {
 		return errors.New("expected TxAttempt.State to be broadcast")
 	}
 	for i, currAttempt := range tx.TxAttempts {
-		if uuid.Equal(currAttempt.ID, attempt.ID) {
+		if bytes.Equal(currAttempt.ID[:], attempt.ID[:]) {
 			tx.TxAttempts[i].State = models.TxAttemptStateInProgress
 			tx.TxAttempts[i].BroadcastBeforeBlockNum = -1
 		}

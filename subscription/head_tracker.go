@@ -374,7 +374,7 @@ func (ht *HeadTracker) totalNewHeadTimeBudget() time.Duration {
 // somewhat shorter than the average time between heads to ensure we
 // don't starve the runqueue.
 func (ht *HeadTracker) backfillTimeBudget() time.Duration {
-	return 7 * ht.config.BlockTime / 10
+	return time.Duration(7 * float64(ht.config.BlockTime) / 10)
 }
 
 // If total callback execution time exceeds this threshold we consider this to

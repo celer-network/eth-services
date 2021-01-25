@@ -7,8 +7,10 @@ import (
 )
 
 type Config struct {
-	Logger           Logger
-	BlockTime        time.Duration
+	Logger    Logger
+	BlockTime time.Duration
+
+	// Primary RPC URL, must begin with ws:// or wss://
 	RPCURL           *url.URL
 	SecondaryRPCURLs []*url.URL
 	ChainID          *big.Int
@@ -25,6 +27,7 @@ type Config struct {
 	GasBumpPercent  uint64
 	GasBumpWei      *big.Int
 
-	GasBumpThreshold int64 // Number of elapsed blocks to trigger gas bumping
+	// Number of elapsed blocks to trigger gas bumping
+	GasBumpThreshold int64
 	GasBumpTxDepth   int
 }

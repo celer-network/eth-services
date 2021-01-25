@@ -1,6 +1,7 @@
 package txmanager
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math/big"
@@ -11,25 +12,25 @@ import (
 	"github.com/celer-network/eth-services/store"
 	"github.com/celer-network/eth-services/store/models"
 	"github.com/celer-network/eth-services/types"
-	uuid "github.com/satori/go.uuid"
+	"github.com/google/uuid"
 
 	gethCommon "github.com/ethereum/go-ethereum/common"
 	"github.com/pkg/errors"
 )
 
-// EthBroadcaster monitors transactions that need to be broadcast, assigns nonces and ensures that
+// TxBroadcaster monitors transactions that need to be broadcast, assigns nonces and ensures that
 // at least one eth node somewhere has received the transaction successfully.
 //
 // This does not guarantee delivery! A whole host of other things can
 // subsequently go wrong such as transactions being evicted from the mempool,
 // eth nodes going offline etc. Responsibility for ensuring eventual inclusion
-// into the chain falls on the shoulders of the ethConfirmer.
+// into the chain falls on the shoulders of the TxConfirmer.
 //
-// What ethBroadcaster does guarantee is:
+// What TxBroadcaster does guarantee is:
 // - a monotonic series of increasing nonces for txes that can all eventually be confirmed if you retry enough times
 // - transition of txes out of unstarted into either fatal_error or unconfirmed
 // - existence of a saved tx_attempt
-type EthBroadcaster interface {
+type TxBroadcaster interface {
 	RegisterAccount(address gethCommon.Address) error
 
 	AddTx(txID uuid.UUID,
@@ -49,14 +50,14 @@ type EthBroadcaster interface {
 	ProcessUnstartedTxs(account *models.Account) error
 }
 
-type ethBroadcaster struct {
+type txBroadcaster struct {
 	ethClient client.Client
 	store     store.Store
 	keyStore  client.KeyStoreInterface
 	config    *types.Config
 	logger    types.Logger
 
-	// trigger allows other goroutines to force ethBroadcaster to rescan the
+	// trigger allows other goroutines to force TxBroadcaster to rescan the
 	// database early (before the next poll interval)
 	trigger chan struct{}
 	chStop  chan struct{}
@@ -67,15 +68,15 @@ type ethBroadcaster struct {
 	StartStopOnce
 }
 
-var _ EthBroadcaster = (*ethBroadcaster)(nil)
+var _ TxBroadcaster = (*txBroadcaster)(nil)
 
-// NewEthBroadcaster returns a new concrete ethBroadcaster
-func NewEthBroadcaster(
+// NewTxBroadcaster returns a new concrete TxBroadcaster
+func NewTxBroadcaster(
 	ethClient client.Client,
 	store store.Store,
 	keyStore client.KeyStoreInterface,
-	config *types.Config) EthBroadcaster {
-	return &ethBroadcaster{
+	config *types.Config) TxBroadcaster {
+	return &txBroadcaster{
 		ethClient: ethClient,
 		store:     store,
 		keyStore:  keyStore,
@@ -87,8 +88,8 @@ func NewEthBroadcaster(
 	}
 }
 
-func (eb *ethBroadcaster) RegisterAccount(address gethCommon.Address) error {
-	account, err := eb.keyStore.GetAccountByAddress(address)
+func (tb *txBroadcaster) RegisterAccount(address gethCommon.Address) error {
+	account, err := tb.keyStore.GetAccountByAddress(address)
 	if err != nil {
 		return err
 	}
@@ -96,10 +97,10 @@ func (eb *ethBroadcaster) RegisterAccount(address gethCommon.Address) error {
 		Address:   account.Address,
 		NextNonce: -1,
 	}
-	return eb.store.PutAccount(storedAccount)
+	return tb.store.PutAccount(storedAccount)
 }
 
-func (eb *ethBroadcaster) AddTx(
+func (tb *txBroadcaster) AddTx(
 	txID uuid.UUID,
 	from gethCommon.Address,
 	to gethCommon.Address,
@@ -107,52 +108,52 @@ func (eb *ethBroadcaster) AddTx(
 	encodedPayload []byte,
 	gasLimit uint64,
 ) error {
-	err := eb.store.AddTx(txID, from, to, value, encodedPayload, gasLimit)
+	err := tb.store.AddTx(txID, from, to, value, encodedPayload, gasLimit)
 	if err != nil {
 		return err
 	}
-	eb.Trigger()
+	tb.Trigger()
 	return nil
 }
 
-func (eb *ethBroadcaster) Start() error {
-	if !eb.OkayToStart() {
-		return errors.New("EthBroadcaster is already started")
+func (tb *txBroadcaster) Start() error {
+	if !tb.OkayToStart() {
+		return errors.New("TxBroadcaster is already started")
 	}
 
-	eb.wg.Add(1)
-	go eb.monitorTxs()
+	tb.wg.Add(1)
+	go tb.monitorTxs()
 
 	return nil
 }
 
-func (eb *ethBroadcaster) Stop() error {
-	if !eb.OkayToStop() {
-		return errors.New("EthBroadcaster is already stopped")
+func (tb *txBroadcaster) Stop() error {
+	if !tb.OkayToStop() {
+		return errors.New("TxBroadcaster is already stopped")
 	}
 
-	close(eb.chStop)
-	eb.wg.Wait()
+	close(tb.chStop)
+	tb.wg.Wait()
 
 	return nil
 }
 
-func (eb *ethBroadcaster) Trigger() {
+func (tb *txBroadcaster) Trigger() {
 	select {
-	case eb.trigger <- struct{}{}:
+	case tb.trigger <- struct{}{}:
 	default:
 	}
 }
 
-func (eb *ethBroadcaster) monitorTxs() {
-	defer eb.wg.Done()
+func (tb *txBroadcaster) monitorTxs() {
+	defer tb.wg.Done()
 	for {
-		pollDBTimer := time.NewTimer(withJitter(eb.config.DBPollInterval))
+		pollDBTimer := time.NewTimer(withJitter(tb.config.DBPollInterval))
 
-		accounts, err := eb.store.GetAccounts()
+		accounts, err := tb.store.GetAccounts()
 
 		if err != nil {
-			eb.logger.Error(errors.Wrap(err, "monitorTxs failed getting key"))
+			tb.logger.Error(errors.Wrap(err, "monitorTxs failed getting key"))
 		} else {
 			var wg sync.WaitGroup
 
@@ -161,8 +162,8 @@ func (eb *ethBroadcaster) monitorTxs() {
 			wg.Add(len(accounts))
 			for _, account := range accounts {
 				go func(account *models.Account) {
-					if err := eb.ProcessUnstartedTxs(account); err != nil {
-						eb.logger.Errorw("Error in ProcessUnstartedTxs",
+					if err := tb.ProcessUnstartedTxs(account); err != nil {
+						tb.logger.Errorw("Error in ProcessUnstartedTxs",
 							"error", err,
 						)
 					}
@@ -173,40 +174,39 @@ func (eb *ethBroadcaster) monitorTxs() {
 		}
 
 		select {
-		case <-eb.chStop:
+		case <-tb.chStop:
 			// NOTE: See: https://godoc.org/time#Timer.Stop for an explanation of this pattern
 			if !pollDBTimer.Stop() {
 				<-pollDBTimer.C
 			}
 			return
-		case <-eb.trigger:
+		case <-tb.trigger:
 			if !pollDBTimer.Stop() {
 				<-pollDBTimer.C
 			}
 			continue
 		case <-pollDBTimer.C:
-			eb.logger.Debug("timer triggered")
 			continue
 		}
 	}
 }
 
-func (eb *ethBroadcaster) ProcessUnstartedTxs(account *models.Account) error {
-	eb.lock.Lock()
-	defer eb.lock.Unlock()
-	return eb.processUnstartedTxs(account.Address)
+func (tb *txBroadcaster) ProcessUnstartedTxs(account *models.Account) error {
+	tb.lock.Lock()
+	defer tb.lock.Unlock()
+	return tb.processUnstartedTxs(account.Address)
 }
 
 // NOTE: This MUST NOT be run concurrently for the same address or it could
 // result in undefined state or deadlocks.
 // First handle any in_progress transactions left over from last time.
 // Then keep looking up unstarted transactions and processing them until there are none remaining.
-func (eb *ethBroadcaster) processUnstartedTxs(fromAddress gethCommon.Address) error {
+func (tb *txBroadcaster) processUnstartedTxs(fromAddress gethCommon.Address) error {
 	var n uint = 0
 	mark := time.Now()
 	defer func() {
 		if n > 0 {
-			eb.logger.Debugw("EthBroadcaster: finished processUnstartedTxs",
+			tb.logger.Debugw("TxBroadcaster: finished processUnstartedTxs",
 				"address", fromAddress,
 				"time", time.Since(mark),
 				"n", n,
@@ -215,12 +215,12 @@ func (eb *ethBroadcaster) processUnstartedTxs(fromAddress gethCommon.Address) er
 		}
 	}()
 
-	if err := eb.handleAnyInProgressTx(fromAddress); err != nil {
+	if err := tb.handleAnyInProgressTx(fromAddress); err != nil {
 		return errors.Wrap(err, "processUnstartedTxs failed")
 	}
 
 	for {
-		tx, err := eb.nextUnstartedTxWithNonce(fromAddress)
+		tx, err := tb.nextUnstartedTxWithNonce(fromAddress)
 		if err != nil {
 			return errors.Wrap(err, "processUnstartedTxs failed")
 		}
@@ -228,15 +228,15 @@ func (eb *ethBroadcaster) processUnstartedTxs(fromAddress gethCommon.Address) er
 			return nil
 		}
 		n++
-		attempt, err := newAttempt(eb.keyStore, eb.config, tx, eb.config.DefaultGasPrice)
+		attempt, err := newAttempt(tb.keyStore, tb.config, tx, tb.config.DefaultGasPrice)
 		if err != nil {
 			return errors.Wrap(err, "processUnstartedTxs failed")
 		}
-		if err := eb.saveInProgressTx(tx, attempt); err != nil {
+		if err := tb.saveInProgressTx(tx, attempt); err != nil {
 			return errors.Wrap(err, "processUnstartedTxs failed")
 		}
 
-		if err := eb.handleInProgressTx(tx, attempt); err != nil {
+		if err := tb.handleInProgressTx(tx, attempt); err != nil {
 			return errors.Wrap(err, "processUnstartedTxs failed")
 		}
 	}
@@ -244,13 +244,13 @@ func (eb *ethBroadcaster) processUnstartedTxs(fromAddress gethCommon.Address) er
 
 // handleInProgressTx checks if there is any transaction
 // in_progress and if so, finishes the job
-func (eb *ethBroadcaster) handleAnyInProgressTx(fromAddress gethCommon.Address) error {
-	tx, err := eb.getInProgressTx(fromAddress)
+func (tb *txBroadcaster) handleAnyInProgressTx(fromAddress gethCommon.Address) error {
+	tx, err := tb.getInProgressTx(fromAddress)
 	if err != nil {
 		return errors.Wrap(err, "handleAnyInProgressTx failed")
 	}
 	if tx != nil {
-		if err := eb.handleInProgressTx(tx, &tx.TxAttempts[0]); err != nil {
+		if err := tb.handleInProgressTx(tx, &tx.TxAttempts[0]); err != nil {
 			return errors.Wrap(err, "handleAnyInProgressTx failed")
 		}
 	}
@@ -261,8 +261,8 @@ func (eb *ethBroadcaster) handleAnyInProgressTx(fromAddress gethCommon.Address) 
 // an unfinished state because something went screwy the last time. Most likely
 // the program crashed in the middle of the ProcessUnstartedTxs loop.
 // It may or may not have been broadcast to an eth node.
-func (eb *ethBroadcaster) getInProgressTx(fromAddress gethCommon.Address) (*models.Tx, error) {
-	tx, err := eb.store.GetOneInProgressTx(fromAddress)
+func (tb *txBroadcaster) getInProgressTx(fromAddress gethCommon.Address) (*models.Tx, error) {
+	tx, err := tb.store.GetOneInProgressTx(fromAddress)
 	if err != nil {
 		if err == store.ErrNotFound {
 			return nil, nil
@@ -278,19 +278,19 @@ func (eb *ethBroadcaster) getInProgressTx(fromAddress gethCommon.Address) (*mode
 
 // There can be at most one in_progress transaction per address.
 // Here we complete the job that we didn't finish last time.
-func (eb *ethBroadcaster) handleInProgressTx(tx *models.Tx, attempt *models.TxAttempt) error {
+func (tb *txBroadcaster) handleInProgressTx(tx *models.Tx, attempt *models.TxAttempt) error {
 	if tx.State != models.TxStateInProgress {
 		return errors.Errorf("invariant violation: expected transaction %v to be in_progress, it was %s", tx.ID, tx.State)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), maxEthNodeRequestTime)
 	defer cancel()
-	sendError := sendTransaction(ctx, eb.ethClient, attempt, eb.logger)
+	sendError := sendTransaction(ctx, tb.ethClient, attempt, tb.logger)
 
 	if sendError.Fatal() {
 		tx.Error = sendError.Error()
 		// Attempt is thrown away in this case; we don't need it since it never got accepted by a node
-		return eb.saveFatallyErroredTransaction(tx)
+		return tb.saveFatallyErroredTransaction(tx)
 	}
 
 	if sendError.IsNonceTooLowError() || sendError.IsReplacementUnderpriced() {
@@ -331,15 +331,15 @@ func (eb *ethBroadcaster) handleInProgressTx(tx *models.Tx, attempt *models.TxAt
 	}
 
 	if sendError.IsTerminallyUnderpriced() {
-		return eb.tryAgainWithHigherGasPrice(sendError, tx, attempt)
+		return tb.tryAgainWithHigherGasPrice(sendError, tx, attempt)
 	}
 
 	if sendError.IsTemporarilyUnderpriced() {
 		// If we can't even get the transaction into the mempool at all, assume
 		// success (even though the transaction will never confirm) and hand
-		// off to the ethConfirmer to bump gas periodically until we _can_ get
+		// off to the TxConfirmer to bump gas periodically until we _can_ get
 		// it in
-		eb.logger.Infow("EthBroadcaster: Transaction temporarily underpriced", "TxID", tx.ID, "err", sendError.Error(), "gasPriceWei", attempt.GasPrice.String())
+		tb.logger.Infow("TxBroadcaster: Transaction temporarily underpriced", "TxID", tx.ID, "err", sendError.Error(), "gasPriceWei", attempt.GasPrice.String())
 		sendError = nil
 	}
 
@@ -350,13 +350,13 @@ func (eb *ethBroadcaster) handleInProgressTx(tx *models.Tx, attempt *models.TxAt
 		return errors.Wrapf(sendError, "error while sending transaction %v", tx.ID)
 	}
 
-	return eb.saveUnconfirmed(tx, attempt)
+	return tb.saveUnconfirmed(tx, attempt)
 }
 
 // Finds next transaction in the queue, assigns a nonce, and moves it to "in_progress" state ready for broadcast.
 // Returns nil if no transactions are in queue
-func (eb *ethBroadcaster) nextUnstartedTxWithNonce(fromAddress gethCommon.Address) (*models.Tx, error) {
-	tx, err := eb.getNextUnstartedTx(fromAddress)
+func (tb *txBroadcaster) nextUnstartedTxWithNonce(fromAddress gethCommon.Address) (*models.Tx, error) {
+	tx, err := tb.getNextUnstartedTx(fromAddress)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			// Finish. No more transactions left to process. Hoorah!
@@ -364,8 +364,9 @@ func (eb *ethBroadcaster) nextUnstartedTxWithNonce(fromAddress gethCommon.Addres
 		}
 		return nil, errors.Wrap(err, "getNextUnstartedTx failed")
 	}
+	tb.logger.Debugw("nextUnstartedTxWithNonce", "id", tx.ID, "state", tx.State)
 
-	nonce, err := eb.getNextNonceWithInitialLoad(tx.FromAddress)
+	nonce, err := tb.getNextNonceWithInitialLoad(tx.FromAddress)
 	if err != nil {
 		return nil, err
 	}
@@ -373,7 +374,7 @@ func (eb *ethBroadcaster) nextUnstartedTxWithNonce(fromAddress gethCommon.Addres
 	return tx, nil
 }
 
-func (eb *ethBroadcaster) saveInProgressTx(tx *models.Tx, attempt *models.TxAttempt) error {
+func (tb *txBroadcaster) saveInProgressTx(tx *models.Tx, attempt *models.TxAttempt) error {
 	if tx.State != models.TxStateUnstarted {
 		return errors.Errorf("can only transition to in_progress from unstarted, transaction is currently %s", tx.State)
 	}
@@ -384,7 +385,7 @@ func (eb *ethBroadcaster) saveInProgressTx(tx *models.Tx, attempt *models.TxAtte
 	attempts := tx.TxAttempts
 	attempts = append(attempts, *attempt)
 	tx.TxAttempts = attempts
-	err := eb.store.PutTx(tx)
+	err := tb.store.PutTx(tx)
 	if err != nil {
 		return errors.Wrap(err, "saveInProgressTx failed")
 	}
@@ -393,73 +394,80 @@ func (eb *ethBroadcaster) saveInProgressTx(tx *models.Tx, attempt *models.TxAtte
 
 // Finds the next saved transaction that has yet to be broadcast from the given address
 // TODO: Ordering
-func (eb *ethBroadcaster) getNextUnstartedTx(fromAddress gethCommon.Address) (*models.Tx, error) {
-	return eb.store.GetNextUnstartedTx(fromAddress)
+func (tb *txBroadcaster) getNextUnstartedTx(fromAddress gethCommon.Address) (*models.Tx, error) {
+	return tb.store.GetNextUnstartedTx(fromAddress)
 }
 
-func (eb *ethBroadcaster) saveUnconfirmed(tx *models.Tx, attempt *models.TxAttempt) error {
+func (tb *txBroadcaster) saveUnconfirmed(tx *models.Tx, attempt *models.TxAttempt) error {
 	if tx.State != models.TxStateInProgress {
 		return errors.Errorf("can only transition to unconfirmed from in_progress, transaction is currently %s", tx.State)
 	}
 	if attempt.State != models.TxAttemptStateInProgress {
 		return errors.New("attempt must be in in_progress state")
 	}
-	eb.logger.Debugw("EthBroadcaster: successfully broadcast transaction", "TxID", tx.ID, "txHash", attempt.Hash.Hex())
+	tb.logger.Debugw("TxBroadcaster: successfully broadcast transaction", "TxID", tx.ID, "txHash", attempt.Hash.Hex())
 	tx.State = models.TxStateUnconfirmed
 	// Update state
 	for i, currAttempt := range tx.TxAttempts {
-		if uuid.Equal(currAttempt.ID, attempt.ID) {
+		if bytes.Equal(currAttempt.ID[:], attempt.ID[:]) {
 			tx.TxAttempts[i].State = models.TxAttemptStateBroadcast
 			break
 		}
 	}
-	err := eb.store.PutTx(tx)
+	err := tb.store.PutTx(tx)
 	if err != nil {
 		return errors.Wrap(err, "saveUnconfirmed failed to save tx")
 	}
-	err = eb.store.SetNextNonce(tx.FromAddress, tx.Nonce+1)
+	// BEGIN DEBUG
+	txs, _ := tb.store.GetTxs(tx.FromAddress)
+	for _, tx := range txs {
+		tb.logger.Debugw("saveUnconfirmed all txs", "id", tx.ID, "state", tx.State)
+	}
+	// END DEBUG
+
+	err = tb.store.SetNextNonce(tx.FromAddress, tx.Nonce+1)
 	if err != nil {
 		return errors.Wrap(err, "saveUnconfirmed failed to update nonce")
 	}
 	return nil
 }
 
-func (eb *ethBroadcaster) tryAgainWithHigherGasPrice(sendError *client.SendError, tx *models.Tx, attempt *models.TxAttempt) error {
-	bumpedGasPrice, err := BumpGas(eb.config, attempt.GasPrice)
+func (tb *txBroadcaster) tryAgainWithHigherGasPrice(sendError *client.SendError, tx *models.Tx, attempt *models.TxAttempt) error {
+	bumpedGasPrice, err := BumpGas(tb.config, attempt.GasPrice)
 	if err != nil {
 		return errors.Wrap(err, "tryAgainWithHigherGasPrice failed")
 	}
-	eb.logger.Errorw(fmt.Sprintf("default gas price %v wei was rejected by the eth node for being too low. "+
+	tb.logger.Errorw(fmt.Sprintf("default gas price %v wei was rejected by the eth node for being too low. "+
 		"Eth node returned: '%s'. "+
 		"Bumping to %v wei and retrying. ACTION REQUIRED: This is a configuration error. "+
-		"Consider increasing DefaultGasPrice", eb.config.DefaultGasPrice, sendError.Error(), bumpedGasPrice), "err", err)
-	if bumpedGasPrice.Cmp(attempt.GasPrice) == 0 && bumpedGasPrice.Cmp(eb.config.MaxGasPrice) == 0 {
+		"Consider increasing DefaultGasPrice", tb.config.DefaultGasPrice, sendError.Error(), bumpedGasPrice), "err", err)
+	if bumpedGasPrice.Cmp(attempt.GasPrice) == 0 && bumpedGasPrice.Cmp(tb.config.MaxGasPrice) == 0 {
 		return errors.Errorf("Hit gas price bump ceiling, will not bump further. This is a terminal error")
 	}
-	replacementAttempt, err := newAttempt(eb.keyStore, eb.config, tx, bumpedGasPrice)
+	replacementAttempt, err := newAttempt(tb.keyStore, tb.config, tx, bumpedGasPrice)
 	if err != nil {
 		return errors.Wrap(err, "tryAgainWithHigherGasPrice failed")
 	}
 
-	if err := saveReplacementInProgressAttempt(eb.store, tx, attempt, replacementAttempt); err != nil {
+	if err := saveReplacementInProgressAttempt(tb.store, tx, attempt, replacementAttempt); err != nil {
 		return errors.Wrap(err, "tryAgainWithHigherGasPrice failed")
 	}
-	return eb.handleInProgressTx(tx, replacementAttempt)
+	return tb.handleInProgressTx(tx, replacementAttempt)
 }
 
-func (eb *ethBroadcaster) saveFatallyErroredTransaction(tx *models.Tx) error {
+func (tb *txBroadcaster) saveFatallyErroredTransaction(tx *models.Tx) error {
 	if tx.State != models.TxStateInProgress {
 		return errors.Errorf("can only transition to fatal_error from in_progress, transaction is currently %s", tx.State)
 	}
 	if tx.Error == "" {
 		return errors.New("expected error field to be set")
 	}
-	eb.logger.Errorw("EthBroadcaster: fatal error sending transaction", "TxID", tx.ID, "error", tx.Error)
+	tb.logger.Errorw("TxBroadcaster: fatal error sending transaction", "TxID", tx.ID, "error", tx.Error)
 	tx.Nonce = -1
 	tx.State = models.TxStateFatalError
 	// Clear TxAttempts
 	tx.TxAttempts = nil
-	err := eb.store.PutTx(tx)
+	err := tb.store.PutTx(tx)
 	if err != nil {
 		return errors.Wrap(err, "saveFatallyErroredTransaction failed to save tx")
 	}
@@ -468,40 +476,40 @@ func (eb *ethBroadcaster) saveFatallyErroredTransaction(tx *models.Tx) error {
 
 // getNextNonceWithInitialLoad returns account.NextNonce for the given address
 // It loads it from the database, or if this is a brand new key, queries the eth node for the latest nonce
-func (eb *ethBroadcaster) getNextNonceWithInitialLoad(address gethCommon.Address) (int64, error) {
-	nonce, err := eb.store.GetNextNonce(address)
+func (tb *txBroadcaster) getNextNonceWithInitialLoad(address gethCommon.Address) (int64, error) {
+	nonce, err := tb.store.GetNextNonce(address)
 	if err != nil {
 		return 0, err
 	}
 	if nonce != -1 {
 		return nonce, nil
 	}
-	return eb.loadAndSaveNonce(address)
+	return tb.loadAndSaveNonce(address)
 }
 
-func (eb *ethBroadcaster) loadAndSaveNonce(address gethCommon.Address) (int64, error) {
-	eb.logger.Debugw("EthBroadcaster: loading next nonce from eth node", "address", address.Hex())
-	nonce, err := eb.loadInitialNonceFromEthClient(address)
+func (tb *txBroadcaster) loadAndSaveNonce(address gethCommon.Address) (int64, error) {
+	tb.logger.Debugw("TxBroadcaster: loading next nonce from eth node", "address", address.Hex())
+	nonce, err := tb.loadInitialNonceFromEthClient(address)
 	if err != nil {
 		return 0, errors.Wrap(err, "loadAndSaveNonce failed to loadInitialNonceFromEthClient")
 	}
-	account, err := eb.store.GetAccount(address)
+	account, err := tb.store.GetAccount(address)
 	if err != nil {
 		return 0, errors.Wrap(err, "loadAndSaveNonce failed to get account")
 	}
 	account.NextNonce = int64(nonce)
-	err = eb.store.PutAccount(account)
+	err = tb.store.PutAccount(account)
 	if err != nil {
 		return 0, errors.Wrap(err, "loadAndSaveNonce failed to put account")
 	}
 	if nonce == 0 {
-		eb.logger.Infow(
-			fmt.Sprintf("EthBroadcaster: first use of address %s, starting from nonce 0", address.Hex()),
+		tb.logger.Infow(
+			fmt.Sprintf("TxBroadcaster: first use of address %s, starting from nonce 0", address.Hex()),
 			"address", address.Hex(),
 			"nextNonce", nonce,
 		)
 	} else {
-		eb.logger.Warnw(fmt.Sprintf("EthBroadcaster: address %s has been used before. Starting from nonce %v."+
+		tb.logger.Warnw(fmt.Sprintf("TxBroadcaster: address %s has been used before. Starting from nonce %v."+
 			" Please note that using the accounts with an external wallet is NOT SUPPORTED and can lead to missed or stuck transactions.",
 			address.Hex(), nonce),
 			"address", address.Hex(),
@@ -512,9 +520,9 @@ func (eb *ethBroadcaster) loadAndSaveNonce(address gethCommon.Address) (int64, e
 	return int64(nonce), nil
 }
 
-func (eb *ethBroadcaster) loadInitialNonceFromEthClient(account gethCommon.Address) (nextNonce uint64, err error) {
+func (tb *txBroadcaster) loadInitialNonceFromEthClient(account gethCommon.Address) (nextNonce uint64, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), maxEthNodeRequestTime)
 	defer cancel()
-	nextNonce, err = eb.ethClient.PendingNonceAt(ctx, account)
+	nextNonce, err = tb.ethClient.PendingNonceAt(ctx, account)
 	return nextNonce, errors.WithStack(err)
 }

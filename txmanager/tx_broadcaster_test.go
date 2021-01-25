@@ -14,8 +14,8 @@ import (
 	esStore "github.com/celer-network/eth-services/store"
 	"github.com/celer-network/eth-services/store/models"
 	"github.com/celer-network/eth-services/txmanager"
+	"github.com/google/uuid"
 	"github.com/pkg/errors"
-	uuid "github.com/satori/go.uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
@@ -29,7 +29,7 @@ const (
 	keyDir = "../internal/fixtures/keys"
 )
 
-func TestEthBroadcaster_ProcessUnstartedTxs_Success(t *testing.T) {
+func TestTxBroadcaster_ProcessUnstartedTxs_Success(t *testing.T) {
 	store := esTesting.NewStore(t)
 	config := esTesting.NewConfig(t)
 	require.NoError(t, os.RemoveAll(config.KeysDir))
@@ -37,7 +37,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_Success(t *testing.T) {
 	keyStore := client.NewInsecureKeyStore(config.KeysDir)
 	account, fromAddress := esTesting.MustAddRandomAccountToKeystore(t, store, keyStore, 0)
 	ethClient := new(mocks.Client)
-	eb := txmanager.NewEthBroadcaster(ethClient, store, keyStore, config)
+	tb := txmanager.NewTxBroadcaster(ethClient, store, keyStore, config)
 
 	toAddress := gethCommon.HexToAddress("0x6C03DDA95a2AEd917EeCc6eddD4b9D16E6380411")
 
@@ -46,7 +46,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_Success(t *testing.T) {
 	gasLimit := uint64(242)
 
 	t.Run("no txes at all", func(t *testing.T) {
-		require.NoError(t, eb.ProcessUnstartedTxs(account))
+		require.NoError(t, tb.ProcessUnstartedTxs(account))
 	})
 
 	t.Run("txes exist for a different from address", func(t *testing.T) {
@@ -62,7 +62,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_Success(t *testing.T) {
 		}
 		require.NoError(t, store.PutTx(tx))
 
-		require.NoError(t, eb.ProcessUnstartedTxs(account))
+		require.NoError(t, tb.ProcessUnstartedTxs(account))
 	})
 
 	t.Run("existing txes with unconfirmed or error states", func(t *testing.T) {
@@ -93,7 +93,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_Success(t *testing.T) {
 		require.NoError(t, store.PutTx(txUnconfirmed))
 		require.NoError(t, store.PutTx(txWithError))
 
-		require.NoError(t, eb.ProcessUnstartedTxs(account))
+		require.NoError(t, tb.ProcessUnstartedTxs(account))
 	})
 
 	t.Run("sends 1 tx", func(t *testing.T) {
@@ -121,7 +121,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_Success(t *testing.T) {
 		require.NoError(t, store.PutTx(tx))
 
 		// Do the thing
-		require.NoError(t, eb.ProcessUnstartedTxs(account))
+		require.NoError(t, tb.ProcessUnstartedTxs(account))
 
 		// Check tx and it's attempt
 		tx, err := store.GetTx(tx.FromAddress, tx.ID)
@@ -149,7 +149,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_Success(t *testing.T) {
 	// TODO: Add multiple tx test with ordering
 }
 
-func TestEthBroadcaster_AssignsNonceOnFirstRun(t *testing.T) {
+func TestTxBroadcaster_AssignsNonceOnFirstRun(t *testing.T) {
 	var err error
 	store := esTesting.NewStore(t)
 	config := esTesting.NewConfig(t)
@@ -159,7 +159,7 @@ func TestEthBroadcaster_AssignsNonceOnFirstRun(t *testing.T) {
 	account, fromAddress := esTesting.MustAddRandomAccountToKeystore(t, store, keyStore)
 
 	ethClient := new(mocks.Client)
-	eb := txmanager.NewEthBroadcaster(ethClient, store, keyStore, config)
+	tb := txmanager.NewTxBroadcaster(ethClient, store, keyStore, config)
 
 	toAddress := gethCommon.HexToAddress("0x6C03DDA95a2AEd917EeCc6eddD4b9D16E6380411")
 	gasLimit := uint64(242)
@@ -184,7 +184,7 @@ func TestEthBroadcaster_AssignsNonceOnFirstRun(t *testing.T) {
 		})).Return(uint64(0), errors.New("something exploded")).Once()
 
 		// First attempt errored
-		err = eb.ProcessUnstartedTxs(account)
+		err = tb.ProcessUnstartedTxs(account)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "something exploded")
 
@@ -219,7 +219,7 @@ func TestEthBroadcaster_AssignsNonceOnFirstRun(t *testing.T) {
 		})).Return(nil).Once()
 
 		// Do the thing
-		require.NoError(t, eb.ProcessUnstartedTxs(account))
+		require.NoError(t, tb.ProcessUnstartedTxs(account))
 
 		// Check tx that it has the correct nonce assigned
 		tx, err = store.GetTx(tx.FromAddress, tx.ID)
@@ -251,7 +251,7 @@ func TestEthBroadcaster_AssignsNonceOnFirstRun(t *testing.T) {
 	})
 }
 
-func TestEthBroadcaster_ProcessUnstartedTxs_ResumingFromCrash(t *testing.T) {
+func TestTxBroadcaster_ProcessUnstartedTxs_ResumingFromCrash(t *testing.T) {
 	nextNonce := int64(916714082576372851)
 
 	// TODO: Add test to make sure not more than one in_progress tx
@@ -264,7 +264,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_ResumingFromCrash(t *testing.T) {
 		account, fromAddress := esTesting.MustAddRandomAccountToKeystore(t, store, keyStore, nextNonce)
 		ethClient := new(mocks.Client)
 
-		eb := txmanager.NewEthBroadcaster(ethClient, store, keyStore, config)
+		tb := txmanager.NewTxBroadcaster(ethClient, store, keyStore, config)
 
 		// Crashed right after we save the nonce to the tx so accounts.NextNonce has not been incremented yet
 		nonce := nextNonce
@@ -275,7 +275,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_ResumingFromCrash(t *testing.T) {
 		})).Return(nil).Once()
 
 		// Do the thing
-		require.NoError(t, eb.ProcessUnstartedTxs(account))
+		require.NoError(t, tb.ProcessUnstartedTxs(account))
 
 		// Check it was saved correctly with its attempt
 		tx, err := store.GetTx(inProgressTx.FromAddress, inProgressTx.ID)
@@ -296,7 +296,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_ResumingFromCrash(t *testing.T) {
 		account, fromAddress := esTesting.MustAddRandomAccountToKeystore(t, store, keyStore, nextNonce)
 		ethClient := new(mocks.Client)
 
-		eb := txmanager.NewEthBroadcaster(ethClient, store, keyStore, config)
+		tb := txmanager.NewTxBroadcaster(ethClient, store, keyStore, config)
 
 		// Crashed right after we save the nonce to the tx so accounts.NextNonce has not been incremented yet
 		nonce := nextNonce
@@ -307,7 +307,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_ResumingFromCrash(t *testing.T) {
 		})).Return(errors.New("exceeds block gas limit")).Once()
 
 		// Do the thing
-		require.NoError(t, eb.ProcessUnstartedTxs(account))
+		require.NoError(t, tb.ProcessUnstartedTxs(account))
 
 		// Check it was saved correctly with its attempt
 		tx, err := store.GetTx(inProgressTx.FromAddress, inProgressTx.ID)
@@ -328,7 +328,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_ResumingFromCrash(t *testing.T) {
 		account, fromAddress := esTesting.MustAddRandomAccountToKeystore(t, store, keyStore, nextNonce)
 		ethClient := new(mocks.Client)
 
-		eb := txmanager.NewEthBroadcaster(ethClient, store, keyStore, config)
+		tb := txmanager.NewTxBroadcaster(ethClient, store, keyStore, config)
 
 		// Crashed right after we save the nonce to the tx so accounts.NextNonce has not been incremented yet
 		nonce := nextNonce
@@ -339,7 +339,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_ResumingFromCrash(t *testing.T) {
 		})).Return(errors.New("known transaction: a1313bd99a81fb4d8ad1d2e90b67c6b3fa77545c990d6251444b83b70b6f8980")).Once()
 
 		// Do the thing
-		require.NoError(t, eb.ProcessUnstartedTxs(account))
+		require.NoError(t, tb.ProcessUnstartedTxs(account))
 
 		// Check it was saved correctly with its attempt
 		tx, err := store.GetTx(inProgressTx.FromAddress, inProgressTx.ID)
@@ -359,7 +359,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_ResumingFromCrash(t *testing.T) {
 		account, fromAddress := esTesting.MustAddRandomAccountToKeystore(t, store, keyStore, nextNonce)
 		ethClient := new(mocks.Client)
 
-		eb := txmanager.NewEthBroadcaster(ethClient, store, keyStore, config)
+		tb := txmanager.NewTxBroadcaster(ethClient, store, keyStore, config)
 
 		// Crashed right after we save the nonce to the tx so accounts.NextNonce has not been incremented yet
 		nonce := nextNonce
@@ -370,7 +370,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_ResumingFromCrash(t *testing.T) {
 		})).Return(errors.New("nonce too low")).Once()
 
 		// Do the thing
-		require.NoError(t, eb.ProcessUnstartedTxs(account))
+		require.NoError(t, tb.ProcessUnstartedTxs(account))
 
 		// Check it was saved correctly with its attempt
 		tx, err := store.GetTx(inProgressTx.FromAddress, inProgressTx.ID)
@@ -391,7 +391,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_ResumingFromCrash(t *testing.T) {
 		account, fromAddress := esTesting.MustAddRandomAccountToKeystore(t, store, keyStore, nextNonce)
 		ethClient := new(mocks.Client)
 
-		eb := txmanager.NewEthBroadcaster(ethClient, store, keyStore, config)
+		tb := txmanager.NewTxBroadcaster(ethClient, store, keyStore, config)
 
 		// Crashed right after we save the nonce to the tx so accounts.NextNonce has not been incremented yet
 		nonce := nextNonce
@@ -402,7 +402,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_ResumingFromCrash(t *testing.T) {
 		})).Return(failedToReachNodeError).Once()
 
 		// Do the thing
-		err := eb.ProcessUnstartedTxs(account)
+		err := tb.ProcessUnstartedTxs(account)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), failedToReachNodeError.Error())
 
@@ -428,7 +428,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_ResumingFromCrash(t *testing.T) {
 		// Configured gas price changed
 		config.DefaultGasPrice = big.NewInt(500000000000)
 
-		eb := txmanager.NewEthBroadcaster(ethClient, store, keyStore, config)
+		tb := txmanager.NewTxBroadcaster(ethClient, store, keyStore, config)
 
 		// Crashed right after we save the nonce to the tx so accounts.NextNonce has not been incremented yet
 		nonce := nextNonce
@@ -444,7 +444,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_ResumingFromCrash(t *testing.T) {
 		})).Return(errors.New("known transaction: a1313bd99a81fb4d8ad1d2e90b67c6b3fa77545c990d6251444b83b70b6f8980")).Once()
 
 		// Do the thing
-		require.NoError(t, eb.ProcessUnstartedTxs(account))
+		require.NoError(t, tb.ProcessUnstartedTxs(account))
 
 		// Check it was saved correctly with its attempt
 		tx, err := store.GetTx(inProgressTx.FromAddress, inProgressTx.ID)
@@ -472,7 +472,7 @@ func getLocalNextNonce(t *testing.T, store esStore.Store, fromAddress gethCommon
 // Note that all of these tests share the same database, and ordering matters.
 // This in order to more deeply test ProcessUnstartedTxs over
 // multiple runs with previous errors in the database.
-func TestEthBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
+func TestTxBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 	var err error
 	toAddress := gethCommon.HexToAddress("0x6C03DDA95a2AEd917EeCc6eddD4b9D16E6380411")
 	value := big.NewInt(142)
@@ -486,11 +486,11 @@ func TestEthBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 	account, fromAddress := esTesting.MustAddRandomAccountToKeystore(t, store, keyStore, 0)
 	ethClient := new(mocks.Client)
 
-	eb := txmanager.NewEthBroadcaster(ethClient, store, keyStore, config)
+	tb := txmanager.NewTxBroadcaster(ethClient, store, keyStore, config)
 
-	t.Run("if external wallet sent a transaction from the account and now the nonce is one higher than it should be and we got replacement underpriced then we assume a previous transaction of ours was the one that succeeded, and hand off to EthConfirmer", func(t *testing.T) {
+	t.Run("if external wallet sent a transaction from the account and now the nonce is one higher than it should be and we got replacement underpriced then we assume a previous transaction of ours was the one that succeeded, and hand off to TxConfirmer", func(t *testing.T) {
 		tx := &models.Tx{
-			ID:             uuid.NewV4(),
+			ID:             uuid.New(),
 			FromAddress:    fromAddress,
 			ToAddress:      toAddress,
 			EncodedPayload: encodedPayload,
@@ -506,7 +506,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 		})).Return(errors.New("replacement transaction underpriced")).Once()
 
 		// Do the thing
-		require.NoError(t, eb.ProcessUnstartedTxs(account))
+		require.NoError(t, tb.ProcessUnstartedTxs(account))
 
 		ethClient.AssertExpectations(t)
 
@@ -529,7 +529,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 		localNextNonce := getLocalNextNonce(t, store, fromAddress)
 
 		tx := &models.Tx{
-			ID:             uuid.NewV4(),
+			ID:             uuid.New(),
 			FromAddress:    fromAddress,
 			ToAddress:      toAddress,
 			EncodedPayload: encodedPayload,
@@ -544,7 +544,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 		})).Return(errors.New(fatalErrorExample)).Once()
 
 		// Do the thing
-		require.NoError(t, eb.ProcessUnstartedTxs(account))
+		require.NoError(t, tb.ProcessUnstartedTxs(account))
 
 		// Check it was saved correctly with its attempt
 		tx, err = store.GetTx(tx.FromAddress, tx.ID)
@@ -569,7 +569,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 		localNextNonce := getLocalNextNonce(t, store, fromAddress)
 
 		tx := &models.Tx{
-			ID:             uuid.NewV4(),
+			ID:             uuid.New(),
 			FromAddress:    fromAddress,
 			ToAddress:      toAddress,
 			EncodedPayload: encodedPayload,
@@ -584,7 +584,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 		})).Return(errors.New(retryableErrorExample)).Once()
 
 		// Do the thing
-		err = eb.ProcessUnstartedTxs(account)
+		err = tb.ProcessUnstartedTxs(account)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), fmt.Sprintf("error while sending transaction %v: insufficient funds for transfer", tx.ID))
 
@@ -606,7 +606,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 			return tx.Nonce() == localNextNonce
 		})).Return(nil).Once()
 
-		require.NoError(t, eb.ProcessUnstartedTxs(account))
+		require.NoError(t, tb.ProcessUnstartedTxs(account))
 
 		// Check it was saved correctly with its attempt
 		tx, err = store.GetTx(tx.FromAddress, tx.ID)
@@ -630,7 +630,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 		localNextNonce := getLocalNextNonce(t, store, fromAddress)
 
 		tx := &models.Tx{
-			ID:             uuid.NewV4(),
+			ID:             uuid.New(),
 			FromAddress:    fromAddress,
 			ToAddress:      toAddress,
 			EncodedPayload: encodedPayload,
@@ -656,7 +656,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 		})).Return(nil).Once()
 
 		// Do the thing
-		require.NoError(t, eb.ProcessUnstartedTxs(account))
+		require.NoError(t, tb.ProcessUnstartedTxs(account))
 
 		ethClient.AssertExpectations(t)
 
@@ -672,7 +672,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 	})
 
 	txUnfinished := &models.Tx{
-		ID:             uuid.NewV4(),
+		ID:             uuid.New(),
 		FromAddress:    fromAddress,
 		ToAddress:      toAddress,
 		EncodedPayload: encodedPayload,
@@ -691,7 +691,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 		})).Return(failedToReachNodeError).Once()
 
 		// Do the thing
-		err = eb.ProcessUnstartedTxs(account)
+		err = tb.ProcessUnstartedTxs(account)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), fmt.Sprintf("error while sending transaction %v: context deadline exceeded", txUnfinished.ID))
 
@@ -710,7 +710,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 
 	t.Run("eth node returns temporarily underpriced transaction", func(t *testing.T) {
 		// This happens if parity is rejecting transactions that are not priced high enough to even get into the mempool at all
-		// It should pretend it was accepted into the mempool and hand off to ethConfirmer to bump gas as normal
+		// It should pretend it was accepted into the mempool and hand off to TxConfirmer to bump gas as normal
 		temporarilyUnderpricedError := "There are too many transactions in the queue. Your transaction was dropped due to limit. Try increasing the fee."
 		localNextNonce := getLocalNextNonce(t, store, fromAddress)
 
@@ -721,7 +721,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 		})).Return(errors.New(temporarilyUnderpricedError)).Once()
 
 		// Do the thing
-		require.NoError(t, eb.ProcessUnstartedTxs(account))
+		require.NoError(t, tb.ProcessUnstartedTxs(account))
 
 		// Check it was saved correctly with its attempt
 		tx, err := store.GetTx(txUnfinished.FromAddress, txUnfinished.ID)
@@ -747,7 +747,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 		config.GasBumpPercent = 0
 
 		tx := &models.Tx{
-			ID:             uuid.NewV4(),
+			ID:             uuid.New(),
 			FromAddress:    fromAddress,
 			ToAddress:      toAddress,
 			EncodedPayload: encodedPayload,
@@ -763,7 +763,7 @@ func TestEthBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 		})).Return(errors.New(underpricedError)).Once()
 
 		// Do the thing
-		err := eb.ProcessUnstartedTxs(account)
+		err := tb.ProcessUnstartedTxs(account)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "bumped gas price of 20000000000 is equal to original gas price of 20000000000. ACTION REQUIRED: This is a configuration error, you must increase either GasBumpPercent or GasBumpWei")
 
