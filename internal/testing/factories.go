@@ -80,6 +80,7 @@ func NewTx(t *testing.T, fromAddress common.Address) *models.Tx {
 
 	return &models.Tx{
 		ID:             uuid.New(),
+		Nonce:          -1,
 		FromAddress:    fromAddress,
 		ToAddress:      NewAddress(),
 		EncodedPayload: []byte{1, 2, 3},
@@ -99,26 +100,38 @@ func MustInsertUnconfirmedTxWithBroadcastAttempt(t *testing.T, store esStore.Sto
 	ethTx := types.NewTransaction(uint64(nonce), NewAddress(), big.NewInt(142), 242, big.NewInt(342), []byte{1, 2, 3})
 	rlp := new(bytes.Buffer)
 	require.NoError(t, ethTx.EncodeRLP(rlp))
+
 	attempt.SignedRawTx = rlp.Bytes()
 	attempt.State = models.TxAttemptStateBroadcast
-	tx.TxAttempts = append(tx.TxAttempts, *attempt)
+	require.NoError(t, store.PutTxAttempt(attempt))
 
+	tx.TxAttemptIDs = append(tx.TxAttemptIDs, attempt.ID)
 	require.NoError(t, store.PutTx(tx))
+	account, err := store.GetAccount(tx.FromAddress)
+	require.NoError(t, err)
+	account.PendingTxIDs = append(account.PendingTxIDs, tx.ID)
+	require.NoError(t, store.PutAccount(account))
 	return tx
 }
 
-func MustInsertConfirmedEthTxWithAttempt(t *testing.T, store esStore.Store, nonce int64, broadcastBeforeBlockNum int64, fromAddress common.Address) *models.Tx {
+func mustInsertConfirmedTxWithAttempt(t *testing.T, store esStore.Store, nonce int64, broadcastBeforeBlockNum int64, fromAddress common.Address) *models.Tx {
 	t.Helper()
 
 	tx := NewTx(t, fromAddress)
 	tx.Nonce = nonce
 	tx.State = models.TxStateConfirmed
+
 	attempt := NewTxAttempt(t, tx.ID)
 	attempt.BroadcastBeforeBlockNum = broadcastBeforeBlockNum
 	attempt.State = models.TxAttemptStateBroadcast
-	tx.TxAttempts = append(tx.TxAttempts, *attempt)
+	require.NoError(t, store.PutTxAttempt(attempt))
 
+	tx.TxAttemptIDs = append(tx.TxAttemptIDs, attempt.ID)
 	require.NoError(t, store.PutTx(tx))
+	account, err := store.GetAccount(tx.FromAddress)
+	require.NoError(t, err)
+	account.PendingTxIDs = append(account.PendingTxIDs, tx.ID)
+	require.NoError(t, store.PutAccount(account))
 	return tx
 }
 
@@ -132,11 +145,17 @@ func MustInsertInProgressTxWithAttempt(t *testing.T, store esStore.Store, nonce 
 	ethTx := types.NewTransaction(uint64(nonce), NewAddress(), big.NewInt(142), 242, big.NewInt(342), []byte{1, 2, 3})
 	rlp := new(bytes.Buffer)
 	require.NoError(t, ethTx.EncodeRLP(rlp))
+
 	attempt.SignedRawTx = rlp.Bytes()
 	attempt.State = models.TxAttemptStateInProgress
-	tx.TxAttempts = append(tx.TxAttempts, *attempt)
+	require.NoError(t, store.PutTxAttempt(attempt))
 
+	tx.TxAttemptIDs = append(tx.TxAttemptIDs, attempt.ID)
 	require.NoError(t, store.PutTx(tx))
+	account, err := store.GetAccount(tx.FromAddress)
+	require.NoError(t, err)
+	account.PendingTxIDs = append(account.PendingTxIDs, tx.ID)
+	require.NoError(t, store.PutAccount(account))
 	return tx
 }
 
@@ -155,32 +174,47 @@ func NewTxAttempt(t *testing.T, txID uuid.UUID) *models.TxAttempt {
 	}
 }
 
-func MustInsertFatalErrorEthTx(t *testing.T, store esStore.Store, fromAddress common.Address) *models.Tx {
+func MustInsertFatalErrorTx(t *testing.T, store esStore.Store, fromAddress common.Address) *models.Tx {
 	tx := NewTx(t, fromAddress)
 	errStr := "something exploded"
 	tx.Error = errStr
 	tx.State = models.TxStateFatalError
 
 	require.NoError(t, store.PutTx(tx))
+	account, err := store.GetAccount(tx.FromAddress)
+	require.NoError(t, err)
+	account.PendingTxIDs = append(account.PendingTxIDs, tx.ID)
+	require.NoError(t, store.PutAccount(account))
 	return tx
 }
 
-func MustAddRandomAccountToKeystore(t testing.TB, store esStore.Store, keyStore client.KeyStoreInterface, opts ...interface{}) (*models.Account, common.Address) {
+func MustAddRandomAccountToKeystore(
+	t testing.TB,
+	store esStore.Store,
+	keyStore client.KeyStoreInterface,
+	opts ...interface{},
+) (account *models.Account, address common.Address) {
 	t.Helper()
 
-	account := MustGenerateRandomAccount(t, opts...)
+	account, keyJSONBytes := MustGenerateRandomAccount(t, opts...)
 	err := keyStore.Unlock(Password)
 	require.NoError(t, err)
-	MustAddAccountToKeyStore(t, account, store, keyStore)
+	MustAddAccountToKeyStore(t, account, keyJSONBytes, store, keyStore)
 	return account, account.Address
 }
 
-func MustAddAccountToKeyStore(t testing.TB, account *models.Account, store esStore.Store, keyStore client.KeyStoreInterface) {
+func MustAddAccountToKeyStore(
+	t testing.TB,
+	account *models.Account,
+	keyJSONBytes []byte,
+	store esStore.Store,
+	keyStore client.KeyStoreInterface,
+) {
 	t.Helper()
 
 	err := keyStore.Unlock(Password)
 	require.NoError(t, err)
-	_, err = keyStore.Import(account.KeyJSON, Password)
+	_, err = keyStore.Import(keyJSONBytes, Password)
 	require.NoError(t, err)
 	require.NoError(t, store.PutAccount(account))
 }
@@ -190,13 +224,13 @@ func MustAddAccountToKeyStore(t testing.TB, account *models.Account, store esSto
 func MustInsertRandomAccount(t testing.TB, store esStore.Store, opts ...interface{}) *models.Account {
 	t.Helper()
 
-	account := MustGenerateRandomAccount(t, opts...)
+	account, _ := MustGenerateRandomAccount(t, opts...)
 
 	require.NoError(t, store.PutAccount(account))
 	return account
 }
 
-func MustGenerateRandomAccount(t testing.TB, opts ...interface{}) *models.Account {
+func MustGenerateRandomAccount(t testing.TB, opts ...interface{}) (account *models.Account, keyJSONBytes []byte) {
 	t.Helper()
 
 	privateKeyECDSA, err := ecdsa.GenerateKey(crypto.S256(), rand.Reader)
@@ -207,7 +241,7 @@ func MustGenerateRandomAccount(t testing.TB, opts ...interface{}) *models.Accoun
 		Address:    crypto.PubkeyToAddress(privateKeyECDSA.PublicKey),
 		PrivateKey: privateKeyECDSA,
 	}
-	keyJSONBytes, err := keystore.EncryptKey(k, Password, client.FastScryptParams.N, client.FastScryptParams.P)
+	keyJSONBytes, err = keystore.EncryptKey(k, Password, client.FastScryptParams.N, client.FastScryptParams.P)
 	require.NoError(t, err)
 
 	var nextNonce *int64
@@ -229,9 +263,12 @@ func MustGenerateRandomAccount(t testing.TB, opts ...interface{}) *models.Accoun
 		nonce = *nextNonce
 	}
 
-	return &models.Account{
-		Address:   k.Address,
-		KeyJSON:   keyJSONBytes,
-		NextNonce: nonce,
+	account = &models.Account{
+		Address:        k.Address,
+		NextNonce:      nonce,
+		PendingTxIDs:   make([]uuid.UUID, 0),
+		CompletedTxIDs: make([]uuid.UUID, 0),
+		ErroredTxIDs:   make([]uuid.UUID, 0),
 	}
+	return account, keyJSONBytes
 }

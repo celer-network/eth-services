@@ -9,66 +9,29 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
-	tmDB "github.com/tendermint/tm-db"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
 const (
-	errStrDecodeTx      = "could not decode tx"
-	errStrDecodeAccount = "could not decode account"
+	errStrDecodeTx = "could not decode Tx"
 )
 
 var (
-	prefixAccount     = []byte("acct")
-	prefixTx          = []byte("tx")
-	prefixCompletedTx = []byte("ctx")
-	prefixFailedTx    = []byte("ftx")
-
-	keyLastTx = []byte("ltx")
+	prefixTx = []byte("tx")
 )
-
-func (store *TMStore) PutAccount(account *models.Account) error {
-	return set(store.nsAccount, account.Address.Bytes(), account)
-}
-
-func (store *TMStore) GetAccount(fromAddress common.Address) (*models.Account, error) {
-	var account models.Account
-	err := get(store.nsAccount, fromAddress.Bytes(), &account)
-	if err != nil {
-		return nil, err
-	}
-	return &account, nil
-}
-
-func (store *TMStore) GetAccounts() ([]*models.Account, error) {
-	iter, err := store.nsAccount.Iterator(nil, nil)
-	if err != nil {
-		return nil, errors.Wrap(err, errStrCreateIter)
-	}
-	var accounts []*models.Account
-	for ; iter.Valid(); iter.Next() {
-		value := iter.Value()
-		var account models.Account
-		unmarshalErr := msgpack.Unmarshal(value, &account)
-		if unmarshalErr != nil {
-			return nil, toDecodeAccountError(err)
-		}
-		accounts = append(accounts, &account)
-	}
-	if len(accounts) == 0 {
-		return nil, esStore.ErrNotFound
-	}
-	return accounts, nil
-}
 
 func (store *TMStore) AddTx(
 	txID uuid.UUID,
 	fromAddress common.Address,
 	toAddress common.Address,
-	value *big.Int,
 	encodedPayload []byte,
+	value *big.Int,
 	gasLimit uint64,
 ) error {
+	account, err := store.GetAccount(fromAddress)
+	if err != nil {
+		return err
+	}
 	tx := models.Tx{
 		ID:             txID,
 		FromAddress:    fromAddress,
@@ -78,76 +41,43 @@ func (store *TMStore) AddTx(
 		GasLimit:       gasLimit,
 		State:          models.TxStateUnstarted,
 	}
-	return store.PutTx(&tx)
+	err = store.PutTx(&tx)
+	if err != nil {
+		return err
+	}
+	account.PendingTxIDs = append(account.PendingTxIDs, txID)
+	return store.PutAccount(account)
 }
 
 func (store *TMStore) PutTx(tx *models.Tx) error {
-	nsTxAddr := tmDB.NewPrefixDB(store.nsTx, tx.FromAddress.Bytes())
-	return set(nsTxAddr, tx.ID[:], tx)
+	return set(store.nsTx, tx.ID[:], tx)
 }
 
-func (store *TMStore) GetTx(fromAddress common.Address, id uuid.UUID) (*models.Tx, error) {
-	nsTxAddr := tmDB.NewPrefixDB(store.nsTx, fromAddress.Bytes())
+func (store *TMStore) GetTx(id uuid.UUID) (*models.Tx, error) {
 	var tx models.Tx
-	err := get(nsTxAddr, id[:], &tx)
+	err := get(store.nsTx, id[:], &tx)
 	if err != nil {
 		return nil, err
 	}
 	return &tx, nil
 }
 
-func (store *TMStore) GetTxs(fromAddress common.Address) ([]*models.Tx, error) {
-	nsTxAddr := tmDB.NewPrefixDB(store.nsTx, fromAddress.Bytes())
-	var txs []*models.Tx
-	iter, err := nsTxAddr.Iterator(nil, nil)
-	if err != nil {
-		return nil, toCreateIterError(err)
-	}
-	var iterError error
-	for ; iter.Valid(); iter.Next() {
-		value := iter.Value()
-		var tx models.Tx
-		unmarshalErr := msgpack.Unmarshal(value, &tx)
-		if unmarshalErr != nil {
-			iterError = toDecodeTxError(err)
-			break
-		}
-		txs = append(txs, &tx)
-	}
-	iter.Close()
-	if iterError != nil {
-		return nil, iterError
-	}
-	if len(txs) == 0 {
-		return nil, esStore.ErrNotFound
-	}
-	return txs, nil
-}
-
 func (store *TMStore) GetOneInProgressTx(fromAddress common.Address) (*models.Tx, error) {
-	nsTxAddr := tmDB.NewPrefixDB(store.nsTx, fromAddress.Bytes())
-	iter, err := nsTxAddr.Iterator(nil, nil)
+	account, err := store.GetAccount(fromAddress)
 	if err != nil {
-		return nil, toCreateIterError(err)
+		return nil, err
 	}
 	var inProgressTx *models.Tx
-	var iterError error
-	for ; iter.Valid(); iter.Next() {
-		value := iter.Value()
-		var tx models.Tx
-		unmarshalErr := msgpack.Unmarshal(value, &tx)
-		if unmarshalErr != nil {
-			iterError = toDecodeTxError(err)
-			break
+	for _, txID := range account.PendingTxIDs {
+		tx, getTxErr := store.GetTx(txID)
+		if getTxErr != nil {
+			return nil, getTxErr
 		}
 		if tx.State == models.TxStateInProgress {
-			inProgressTx = &tx
+			inProgressTx = tx
 			break
 		}
-	}
-	iter.Close()
-	if iterError != nil {
-		return nil, iterError
+
 	}
 	if inProgressTx == nil {
 		return nil, esStore.ErrNotFound
@@ -155,53 +85,21 @@ func (store *TMStore) GetOneInProgressTx(fromAddress common.Address) (*models.Tx
 	return inProgressTx, nil
 }
 
-func (store *TMStore) GetNextNonce(address common.Address) (int64, error) {
-	var account models.Account
-	err := get(store.nsAccount, address.Bytes(), &account)
-	if err != nil {
-		return 0, err
-	}
-	return account.NextNonce, nil
-}
-
-func (store *TMStore) SetNextNonce(address common.Address, nextNonce int64) error {
-	var account models.Account
-	err := get(store.nsAccount, address.Bytes(), &account)
-	if err != nil {
-		return err
-	}
-	account.NextNonce = nextNonce
-	err = set(store.nsAccount, address.Bytes(), &account)
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
 func (store *TMStore) GetNextUnstartedTx(fromAddress common.Address) (*models.Tx, error) {
-	nsTxAddr := tmDB.NewPrefixDB(store.nsTx, fromAddress.Bytes())
-	iter, err := nsTxAddr.Iterator(nil, nil)
+	account, err := store.GetAccount(fromAddress)
 	if err != nil {
-		return nil, toCreateIterError(err)
+		return nil, err
 	}
 	var unstartedTx *models.Tx
-	var iterError error
-	for ; iter.Valid(); iter.Next() {
-		var tx models.Tx
-		value := iter.Value()
-		unmarshalErr := msgpack.Unmarshal(value, &tx)
-		if unmarshalErr != nil {
-			iterError = toDecodeTxError(err)
-			break
+	for _, txID := range account.PendingTxIDs {
+		tx, getTxErr := store.GetTx(txID)
+		if getTxErr != nil {
+			return nil, getTxErr
 		}
 		if tx.State == models.TxStateUnstarted {
-			unstartedTx = &tx
+			unstartedTx = tx
 			break
 		}
-	}
-	iter.Close()
-	if iterError != nil {
-		return nil, iterError
 	}
 	if unstartedTx == nil {
 		return nil, esStore.ErrNotFound
@@ -210,77 +108,56 @@ func (store *TMStore) GetNextUnstartedTx(fromAddress common.Address) (*models.Tx
 }
 
 func (store *TMStore) GetTxsRequiringReceiptFetch() ([]*models.Tx, error) {
-	accounts, err := store.GetAccounts()
-	if err != nil {
-		return nil, err
-	}
 	var txs []*models.Tx
-	for _, account := range accounts {
-		nsTxAddr := tmDB.NewPrefixDB(store.nsTx, account.Address.Bytes())
-		iter, err := nsTxAddr.Iterator(nil, nil)
-		if err != nil {
-			return nil, toCreateIterError(err)
+	iter, err := store.nsTx.Iterator(nil, nil)
+	if err != nil {
+		return nil, toCreateIterError(err)
+	}
+	var iterError error
+	for ; iter.Valid(); iter.Next() {
+		var tx models.Tx
+		value := iter.Value()
+		unmarshalErr := msgpack.Unmarshal(value, &tx)
+		if unmarshalErr != nil {
+			iterError = toDecodeTxError(err)
+			break
 		}
-		var iterError error
-		for ; iter.Valid(); iter.Next() {
-			var tx models.Tx
-			value := iter.Value()
-			unmarshalErr := msgpack.Unmarshal(value, &tx)
-			if unmarshalErr != nil {
-				iterError = toDecodeTxError(err)
-				break
-			}
-			if tx.State == models.TxStateUnconfirmed || tx.State == models.TxStateConfirmedMissingReceipt {
-				txs = append(txs, &tx)
-			}
+		if tx.State == models.TxStateUnconfirmed || tx.State == models.TxStateConfirmedMissingReceipt {
+			txs = append(txs, &tx)
 		}
-		iter.Close()
-		if iterError != nil {
-			return nil, iterError
-		}
+	}
+	iter.Close()
+	if iterError != nil {
+		return nil, iterError
 	}
 	return txs, nil
 }
 
 func (store *TMStore) SetBroadcastBeforeBlockNum(blockNum int64) error {
-	accounts, err := store.GetAccounts()
+	iter, err := store.nsTxAttempt.Iterator(nil, nil)
 	if err != nil {
-		return err
+		return toCreateIterError(err)
 	}
-	// Get all Txs
-	var txs []*models.Tx
-	for _, account := range accounts {
-		nsTxAddr := tmDB.NewPrefixDB(store.nsTx, account.Address.Bytes())
-		iter, err := nsTxAddr.Iterator(nil, nil)
-		if err != nil {
-			return toCreateIterError(err)
+	var iterError error
+	for ; iter.Valid(); iter.Next() {
+		var attempt models.TxAttempt
+		value := iter.Value()
+		unmarshalErr := msgpack.Unmarshal(value, &attempt)
+		if unmarshalErr != nil {
+			iterError = toDecodeTxAttemptError(err)
+			break
 		}
-		var iterError error
-		for ; iter.Valid(); iter.Next() {
-			var tx models.Tx
-			value := iter.Value()
-			unmarshalErr := msgpack.Unmarshal(value, &tx)
-			if unmarshalErr != nil {
-				iterError = toDecodeTxError(err)
-				break
-			}
-			txs = append(txs, &tx)
-		}
-		iter.Close()
-		if iterError != nil {
-			return iterError
-		}
-	}
-	for _, tx := range txs {
-		for _, attempt := range tx.TxAttempts {
-			if attempt.State == models.TxAttemptStateBroadcast && attempt.BroadcastBeforeBlockNum == -1 {
-				attempt.BroadcastBeforeBlockNum = blockNum
-				putErr := store.PutTx(tx)
-				if putErr != nil {
-					return putErr
-				}
+		if attempt.State == models.TxAttemptStateBroadcast && attempt.BroadcastBeforeBlockNum == -1 {
+			attempt.BroadcastBeforeBlockNum = blockNum
+			putErr := store.PutTxAttempt(&attempt)
+			if putErr != nil {
+				return putErr
 			}
 		}
+	}
+	iter.Close()
+	if iterError != nil {
+		return iterError
 	}
 	return nil
 }
@@ -291,54 +168,27 @@ func (store *TMStore) MarkConfirmedMissingReceipt() error {
 		return err
 	}
 	for _, account := range accounts {
-		nsTxAddr := tmDB.NewPrefixDB(store.nsTx, account.Address.Bytes())
 		// Get max nonce for confirmed Txs
-		iter, err := nsTxAddr.Iterator(nil, nil)
-		if err != nil {
-			return toCreateIterError(err)
-		}
+		var txs []*models.Tx
 		var maxNonce int64 = -1
-		var iterError error
-		for ; iter.Valid(); iter.Next() {
-			var tx models.Tx
-			value := iter.Value()
-			unmarshalErr := msgpack.Unmarshal(value, &tx)
-			if unmarshalErr != nil {
-				iterError = toDecodeTxError(err)
-				break
+		for _, txID := range account.PendingTxIDs {
+			tx, getTxErr := store.GetTx(txID)
+			if getTxErr != nil {
+				return getTxErr
 			}
 			if tx.State == models.TxStateConfirmed && tx.Nonce > maxNonce {
 				maxNonce = tx.Nonce
 			}
-		}
-		iter.Close()
-		if iterError != nil {
-			return iterError
+			txs = append(txs, tx)
 		}
 
 		// Set to confirmed_missing_receipt for stale unconfirmed Txs
-		iter, err = nsTxAddr.Iterator(nil, nil)
-		if err != nil {
-			return toCreateIterError(err)
-		}
-
 		var txsToUpdate []*models.Tx
-		for ; iter.Valid(); iter.Next() {
-			var tx models.Tx
-			value := iter.Value()
-			unmarshalErr := msgpack.Unmarshal(value, &tx)
-			if unmarshalErr != nil {
-				iterError = toDecodeTxError(err)
-				break
-			}
+		for _, tx := range txs {
 			if tx.State == models.TxStateUnconfirmed && tx.Nonce < maxNonce {
 				tx.State = models.TxStateConfirmedMissingReceipt
-				txsToUpdate = append(txsToUpdate, &tx)
+				txsToUpdate = append(txsToUpdate, tx)
 			}
-		}
-		iter.Close()
-		if iterError != nil {
-			return iterError
 		}
 		for _, tx := range txsToUpdate {
 			err = store.PutTx(tx)
@@ -356,25 +206,19 @@ func (store *TMStore) MarkOldTxsMissingReceiptAsErrored(cutoff int64) error {
 		return err
 	}
 	for _, account := range accounts {
-		nsTxAddr := tmDB.NewPrefixDB(store.nsTx, account.Address.Bytes())
-		// Get max nonce for confirmed Txs
-		iter, err := nsTxAddr.Iterator(nil, nil)
-		if err != nil {
-			return toCreateIterError(err)
-		}
-		var iterError error
 		var txsToUpdate []*models.Tx
-		for ; iter.Valid(); iter.Next() {
-			var tx models.Tx
-			value := iter.Value()
-			unmarshalErr := msgpack.Unmarshal(value, &tx)
-			if unmarshalErr != nil {
-				iterError = toDecodeTxError(err)
-				break
+		for _, txID := range account.PendingTxIDs {
+			tx, getTxErr := store.GetTx(txID)
+			if getTxErr != nil {
+				return getTxErr
 			}
 			if tx.State == models.TxStateConfirmedMissingReceipt {
 				var maxAttemptBroadcastBeforeBlockNum int64 = -1
-				for _, attempt := range tx.TxAttempts {
+				for _, attemptID := range tx.TxAttemptIDs {
+					attempt, getAttemptErr := store.GetTxAttempt(attemptID)
+					if getAttemptErr != nil {
+						return getAttemptErr
+					}
 					if attempt.BroadcastBeforeBlockNum > maxAttemptBroadcastBeforeBlockNum {
 						maxAttemptBroadcastBeforeBlockNum = attempt.BroadcastBeforeBlockNum
 					}
@@ -384,13 +228,9 @@ func (store *TMStore) MarkOldTxsMissingReceiptAsErrored(cutoff int64) error {
 					tx.State = models.TxStateFatalError
 					tx.Nonce = -1
 					tx.Error = esStore.ErrCouldNotGetReceipt.Error()
-					txsToUpdate = append(txsToUpdate, &tx)
+					txsToUpdate = append(txsToUpdate, tx)
 				}
 			}
-		}
-		iter.Close()
-		if iterError != nil {
-			return iterError
 		}
 		for _, tx := range txsToUpdate {
 			err = store.PutTx(tx)
@@ -402,27 +242,31 @@ func (store *TMStore) MarkOldTxsMissingReceiptAsErrored(cutoff int64) error {
 	return nil
 }
 
-func (store *TMStore) GetTxsRequiringNewAttempt(address common.Address, blockNum int64, gasBumpThreshold int64, depth int) ([]*models.Tx, error) {
-	nsTxAddr := tmDB.NewPrefixDB(store.nsTx, address.Bytes())
-	iter, err := nsTxAddr.Iterator(nil, nil)
+func (store *TMStore) GetTxsRequiringNewAttempt(
+	address common.Address,
+	blockNum int64,
+	gasBumpThreshold int64,
+	depth int,
+) ([]*models.Tx, error) {
+	account, err := store.GetAccount(address)
 	if err != nil {
-		return nil, toCreateIterError(err)
+		return nil, err
 	}
-	var iterError error
 	var txs []*models.Tx
-	for ; iter.Valid(); iter.Next() {
-		var tx models.Tx
-		value := iter.Value()
-		unmarshalErr := msgpack.Unmarshal(value, &tx)
-		if unmarshalErr != nil {
-			iterError = toDecodeTxError(err)
-			break
+	for _, txID := range account.PendingTxIDs {
+		tx, getTxErr := store.GetTx(txID)
+		if getTxErr != nil {
+			return nil, getTxErr
 		}
 		if tx.State != models.TxStateUnconfirmed {
 			continue
 		}
 		includeTx := true
-		for _, attempt := range tx.TxAttempts {
+		for _, attemptID := range tx.TxAttemptIDs {
+			attempt, getAttemptErr := store.GetTxAttempt(attemptID)
+			if getAttemptErr != nil {
+				return nil, getAttemptErr
+			}
 			includeAttempt := attempt.State != models.TxAttemptStateInsufficientEth &&
 				(attempt.State != models.TxAttemptStateBroadcast ||
 					attempt.BroadcastBeforeBlockNum == int64(-1) ||
@@ -433,12 +277,8 @@ func (store *TMStore) GetTxsRequiringNewAttempt(address common.Address, blockNum
 			}
 		}
 		if includeTx {
-			txs = append(txs, &tx)
+			txs = append(txs, tx)
 		}
-	}
-	iter.Close()
-	if iterError != nil {
-		return nil, iterError
 	}
 
 	// Sort txs by ascending nonce
@@ -459,33 +299,32 @@ func (store *TMStore) GetTxsConfirmedAtOrAboveBlockHeight(blockNum int64) ([]*mo
 		return nil, err
 	}
 	for _, account := range accounts {
-		nsTxAddr := tmDB.NewPrefixDB(store.nsTx, account.Address.Bytes())
-		iter, err := nsTxAddr.Iterator(nil, nil)
-		if err != nil {
-			return nil, toCreateIterError(err)
-		}
-		var iterError error
 		var txs []*models.Tx
-		for ; iter.Valid(); iter.Next() {
-			var tx models.Tx
-			value := iter.Value()
-			unmarshalErr := msgpack.Unmarshal(value, &tx)
-			if unmarshalErr != nil {
-				iterError = toDecodeTxError(err)
-				break
+		for _, txID := range account.PendingTxIDs {
+			tx, getTxErr := store.GetTx(txID)
+			if getTxErr != nil {
+				return nil, getTxErr
 			}
 			if tx.State != models.TxStateConfirmed && tx.State != models.TxStateConfirmedMissingReceipt {
 				continue
 			}
 			// TODO: Just checking the last attempt should suffice
 			includeTx := false
-			for i := len(tx.TxAttempts) - 1; i >= 0; i-- {
-				attempt := tx.TxAttempts[i]
+			for i := len(tx.TxAttemptIDs) - 1; i >= 0; i-- {
+				attemptID := tx.TxAttemptIDs[i]
+				attempt, getAttemptErr := store.GetTxAttempt(attemptID)
+				if getAttemptErr != nil {
+					return nil, getAttemptErr
+				}
 				if attempt.State != models.TxAttemptStateBroadcast {
 					continue
 				}
-				for j := len(attempt.Receipts) - 1; j >= 0; j-- {
-					receipt := attempt.Receipts[j]
+				for j := len(attempt.ReceiptIDs) - 1; j >= 0; j-- {
+					receiptID := attempt.ReceiptIDs[j]
+					receipt, getReceiptErr := store.GetReceipt(receiptID)
+					if getReceiptErr != nil {
+						return nil, getReceiptErr
+					}
 					if receipt.BlockNumber >= blockNum {
 						includeTx = true
 						break
@@ -496,12 +335,8 @@ func (store *TMStore) GetTxsConfirmedAtOrAboveBlockHeight(blockNum int64) ([]*mo
 				}
 			}
 			if includeTx {
-				txs = append(txs, &tx)
+				txs = append(txs, tx)
 			}
-		}
-		iter.Close()
-		if iterError != nil {
-			return nil, iterError
 		}
 
 		// Sort txs by ascending nonce
@@ -514,41 +349,34 @@ func (store *TMStore) GetTxsConfirmedAtOrAboveBlockHeight(blockNum int64) ([]*mo
 }
 
 func (store *TMStore) GetInProgressAttempts(address common.Address) ([]*models.TxAttempt, error) {
-	nsTxAddr := tmDB.NewPrefixDB(store.nsTx, address.Bytes())
-	iter, err := nsTxAddr.Iterator(nil, nil)
+	account, err := store.GetAccount(address)
 	if err != nil {
-		return nil, toCreateIterError(err)
+		return nil, err
 	}
-	var iterError error
 	var attempts []*models.TxAttempt
-	for ; iter.Valid(); iter.Next() {
-		var tx models.Tx
-		value := iter.Value()
-		unmarshalErr := msgpack.Unmarshal(value, &tx)
-		if unmarshalErr != nil {
-			iterError = toDecodeTxError(err)
-			break
+	for _, txID := range account.PendingTxIDs {
+		tx, getTxErr := store.GetTx(txID)
+		if getTxErr != nil {
+			return nil, err
 		}
 		if tx.State == models.TxStateConfirmed || tx.State == models.TxStateConfirmedMissingReceipt ||
 			tx.State == models.TxStateUnconfirmed {
-			for _, attempt := range tx.TxAttempts {
-				if attempt.State == models.TxAttemptStateInProgress {
-					attempts = append(attempts, &attempt)
+			for _, attemptID := range tx.TxAttemptIDs {
+				attempt, getAttemptErr := store.GetTxAttempt(attemptID)
+				if getAttemptErr != nil {
+					return nil, err
 				}
+				if attempt.State == models.TxAttemptStateInProgress {
+					attempts = append(attempts, attempt)
+				}
+
 			}
 		}
-	}
-	iter.Close()
-	if iterError != nil {
-		return nil, iterError
+
 	}
 	return attempts, nil
 }
 
 func toDecodeTxError(err error) error {
 	return errors.Wrap(err, errStrDecodeTx)
-}
-
-func toDecodeAccountError(err error) error {
-	return errors.Wrap(err, errStrDecodeAccount)
 }

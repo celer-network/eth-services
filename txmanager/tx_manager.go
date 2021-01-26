@@ -28,13 +28,9 @@ type TxManager interface {
 		gasLimit uint64,
 	) (uuid.UUID, error)
 
-	IsTxConfirmedAtOrBeforeBlockNumber(
-		fromAddress gethCommon.Address,
-		txID uuid.UUID,
-		blockNumber int64,
-	) (bool, error)
+	IsTxConfirmedAtOrBeforeBlockNumber(txID uuid.UUID, blockNumber int64) (bool, error)
 
-	AddJob(txFromAddress gethCommon.Address, txID uuid.UUID, metadata []byte) (uuid.UUID, error)
+	AddJob(txID uuid.UUID, metadata []byte) (uuid.UUID, error)
 
 	MonitorJob(jobID uuid.UUID, handler func(job *esStoreModels.Job, tx *esStoreModels.Tx) error)
 
@@ -110,12 +106,8 @@ func (txm *txManager) AddTx(
 	return txID, nil
 }
 
-func (txm *txManager) IsTxConfirmedAtOrBeforeBlockNumber(
-	fromAddress gethCommon.Address,
-	txID uuid.UUID,
-	blockNumber int64,
-) (bool, error) {
-	tx, err := txm.confirmer.GetTx(fromAddress, txID)
+func (txm *txManager) IsTxConfirmedAtOrBeforeBlockNumber(txID uuid.UUID, blockNumber int64) (bool, error) {
+	tx, err := txm.confirmer.GetTx(txID)
 	if err != nil {
 		return false, err
 	}
@@ -124,13 +116,21 @@ func (txm *txManager) IsTxConfirmedAtOrBeforeBlockNumber(
 	}
 	// TODO: Just checking the last attempt should suffice
 	isConfirmed := false
-	for i := len(tx.TxAttempts) - 1; i >= 0; i-- {
-		attempt := tx.TxAttempts[i]
+	for i := len(tx.TxAttemptIDs) - 1; i >= 0; i-- {
+		attemptID := tx.TxAttemptIDs[i]
+		attempt, getAttemptErr := txm.store.GetTxAttempt(attemptID)
+		if getAttemptErr != nil {
+			return false, getAttemptErr
+		}
 		if attempt.State != esStoreModels.TxAttemptStateBroadcast {
 			continue
 		}
-		for j := len(attempt.Receipts) - 1; j >= 0; j-- {
-			receipt := attempt.Receipts[j]
+		for j := len(attempt.ReceiptIDs) - 1; j >= 0; j-- {
+			receiptID := attempt.ReceiptIDs[j]
+			receipt, getReceiptErr := txm.store.GetReceipt(receiptID)
+			if getReceiptErr != nil {
+				return false, getReceiptErr
+			}
 			if receipt.BlockNumber <= blockNumber {
 				isConfirmed = true
 				break
@@ -165,14 +165,13 @@ func (r *blockNumberRecorder) OnNewLongestChain(ctx context.Context, head esStor
 	r.blockNumber = head.Number
 }
 
-func (txm *txManager) AddJob(txFromAddress gethCommon.Address, txID uuid.UUID, metadata []byte) (uuid.UUID, error) {
+func (txm *txManager) AddJob(txID uuid.UUID, metadata []byte) (uuid.UUID, error) {
 	jobID := uuid.New()
 	job := &esStoreModels.Job{
-		ID:            jobID,
-		TxID:          txID,
-		TxFromAddress: txFromAddress,
-		Metadata:      metadata,
-		State:         esStoreModels.JobStateUnhandled,
+		ID:       jobID,
+		TxID:     txID,
+		Metadata: metadata,
+		State:    esStoreModels.JobStateUnhandled,
 	}
 	err := txm.store.PutJob(job)
 	if err != nil {
@@ -201,12 +200,12 @@ func (txm *txManager) MonitorJob(jobID uuid.UUID, handler func(job *esStoreModel
 					txm.config.Logger.Error(err)
 					return
 				}
-				confirmed, err := txm.IsTxConfirmedAtOrBeforeBlockNumber(job.TxFromAddress, job.TxID, threshold)
+				confirmed, err := txm.IsTxConfirmedAtOrBeforeBlockNumber(job.TxID, threshold)
 				if err != nil {
 					txm.config.Logger.Error(err)
 					return
 				}
-				tx, err := txm.store.GetTx(job.TxFromAddress, job.TxID)
+				tx, err := txm.store.GetTx(job.TxID)
 				if err != nil {
 					txm.config.Logger.Error(err)
 					return

@@ -60,9 +60,9 @@ func signTx(keyStore client.KeyStoreInterface, account gethAccounts.Account, tx 
 
 }
 
-// send broadcasts the transaction to the ethereum network, writes any relevant
-// data onto the attempt and returns an error (or nil) depending on the status
-func sendTransaction(ctx context.Context, ethClient client.Client, attempt *models.TxAttempt, logger types.Logger) *client.SendError {
+// sendTx broadcasts the tx to the ethereum network, writes any relevant data into the TxAttempt and
+// returns an error (or nil) depending on the status.
+func sendTx(ctx context.Context, ethClient client.Client, attempt *models.TxAttempt, logger types.Logger) *client.SendError {
 	signedTx, err := attempt.GetSignedTx()
 	if err != nil {
 		return client.NewFatalSendError(err)
@@ -70,6 +70,9 @@ func sendTransaction(ctx context.Context, ethClient client.Client, attempt *mode
 
 	ctx, cancel := context.WithTimeout(ctx, maxEthNodeRequestTime)
 	defer cancel()
+	// BEGIN DEBUG
+	logger.Debugw("SendTransaction", "signedTx", signedTx, "txID", attempt.TxID)
+	// END DEBUG
 	err = ethClient.SendTransaction(ctx, signedTx)
 	err = errors.WithStack(err)
 
@@ -86,26 +89,41 @@ func sendTransaction(ctx context.Context, ethClient client.Client, attempt *mode
 	return client.NewSendError(err)
 }
 
+// saveReplacementInProgressAttempt replace an old attempt with a new one.
 func saveReplacementInProgressAttempt(store esStore.Store, tx *models.Tx, oldAttempt *models.TxAttempt, replacementAttempt *models.TxAttempt) error {
+	errStr := "saveReplacementInProgressAttempt failed"
 	if oldAttempt.State != models.TxAttemptStateInProgress || replacementAttempt.State != models.TxAttemptStateInProgress {
-		return errors.New("expected attempts to be in_progress")
+		return errors.Wrap(errors.New("expected attempts to be in_progress"), errStr)
 	}
 	if bytes.Equal(oldAttempt.ID[:], uuid.Nil[:]) {
-		return errors.New("expected oldAttempt to have an ID")
+		return errors.Wrap(errors.New("expected oldAttempt to have an ID"), errStr)
 	}
 
-	var newAttempts []models.TxAttempt
-	for _, attempt := range tx.TxAttempts {
-		if !bytes.Equal(attempt.ID[:], oldAttempt.ID[:]) {
-			newAttempts = append(newAttempts, attempt)
+	attemptIDs := tx.TxAttemptIDs
+	removeIndex := -1
+	for i, attemptID := range attemptIDs {
+		if bytes.Equal(attemptID[:], oldAttempt.ID[:]) {
+			removeIndex = i
+			break
 		}
 	}
-
-	newAttempts = append(newAttempts, *replacementAttempt)
-	tx.TxAttempts = newAttempts
+	copy(attemptIDs[removeIndex:], attemptIDs[removeIndex+1:])
+	attemptIDs = attemptIDs[:len(attemptIDs)-1]
+	attemptIDs = append(attemptIDs, replacementAttempt.ID)
+	tx.TxAttemptIDs = attemptIDs
 	err := store.PutTx(tx)
 	if err != nil {
-		return errors.Wrap(err, "saveReplacementInProgressAttempt failed")
+		return errors.Wrap(err, errStr)
+	}
+
+	// Delete old attempt and add new attempt
+	err = store.DeleteTxAttempt(oldAttempt.ID)
+	if err != nil {
+		return errors.Wrap(err, errStr)
+	}
+	err = store.PutTxAttempt(replacementAttempt)
+	if err != nil {
+		return errors.Wrap(err, errStr)
 	}
 	return nil
 }

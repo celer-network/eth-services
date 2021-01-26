@@ -9,15 +9,16 @@ import (
 
 const (
 	errStrCreateIter = "could not create iterator"
-	errStrCloseIter  = "could not close iterator"
 )
 
 // TMStore is a Store implementation using Tendermint tm-db
 type TMStore struct {
-	nsHead    *tmDB.PrefixDB
-	nsAccount *tmDB.PrefixDB
-	nsTx      *tmDB.PrefixDB
-	nsJob     *tmDB.PrefixDB
+	nsHead      *tmDB.PrefixDB
+	nsAccount   *tmDB.PrefixDB
+	nsTx        *tmDB.PrefixDB
+	nsTxAttempt *tmDB.PrefixDB
+	nsReceipt   *tmDB.PrefixDB
+	nsJob       *tmDB.PrefixDB
 }
 
 var _ store.Store = (*TMStore)(nil)
@@ -25,10 +26,12 @@ var _ store.Store = (*TMStore)(nil)
 // NewTMStore creates a new TMStore
 func NewTMStore(db tmDB.DB) *TMStore {
 	return &TMStore{
-		nsHead:    tmDB.NewPrefixDB(db, prefixHead),
-		nsAccount: tmDB.NewPrefixDB(db, prefixAccount),
-		nsTx:      tmDB.NewPrefixDB(db, prefixTx),
-		nsJob:     tmDB.NewPrefixDB(db, prefixJob),
+		nsHead:      tmDB.NewPrefixDB(db, prefixHead),
+		nsAccount:   tmDB.NewPrefixDB(db, prefixAccount),
+		nsTx:        tmDB.NewPrefixDB(db, prefixTx),
+		nsTxAttempt: tmDB.NewPrefixDB(db, prefixTxAttempt),
+		nsReceipt:   tmDB.NewPrefixDB(db, prefixReceipt),
+		nsJob:       tmDB.NewPrefixDB(db, prefixJob),
 	}
 }
 

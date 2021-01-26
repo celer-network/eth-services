@@ -11,10 +11,6 @@ var (
 	prefixJob = []byte("job")
 )
 
-func (store *TMStore) PutJob(job *models.Job) error {
-	return set(store.nsJob, job.ID[:], job)
-}
-
 func (store *TMStore) GetJob(jobID uuid.UUID) (*models.Job, error) {
 	var job models.Job
 	err := get(store.nsJob, jobID[:], &job)
@@ -22,6 +18,10 @@ func (store *TMStore) GetJob(jobID uuid.UUID) (*models.Job, error) {
 		return nil, err
 	}
 	return &job, nil
+}
+
+func (store *TMStore) PutJob(job *models.Job) error {
+	return set(store.nsJob, job.ID[:], job)
 }
 
 func (store *TMStore) DeleteJob(jobID uuid.UUID) error {

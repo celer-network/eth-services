@@ -38,19 +38,20 @@ const (
 
 type Account struct {
 	Address common.Address
-	KeyJSON []byte
 	// This is the nonce that should be used for the next transaction.
 	// Conceptually equivalent to geth's `PendingNonceAt` but more reliable
 	// because we have a better view of our own transactions
-	NextNonce int64
+	NextNonce      int64
+	PendingTxIDs   []uuid.UUID
+	CompletedTxIDs []uuid.UUID
+	ErroredTxIDs   []uuid.UUID
 }
 
 type Job struct {
-	ID            uuid.UUID
-	TxFromAddress common.Address
-	TxID          uuid.UUID
-	Metadata      []byte
-	State         JobState
+	ID       uuid.UUID
+	TxID     uuid.UUID
+	Metadata []byte
+	State    JobState
 }
 
 type Tx struct {
@@ -63,7 +64,7 @@ type Tx struct {
 	GasLimit       uint64
 	State          TxState
 	Error          string
-	TxAttempts     []TxAttempt
+	TxAttemptIDs   []uuid.UUID
 }
 
 func (e Tx) GetError() error {
@@ -86,10 +87,11 @@ type TxAttempt struct {
 	Hash                    common.Hash
 	BroadcastBeforeBlockNum int64
 	State                   TxAttemptState
-	Receipts                []Receipt
+	ReceiptIDs              []uuid.UUID
 }
 
 type Receipt struct {
+	ID               uuid.UUID
 	TxHash           common.Hash
 	BlockHash        common.Hash
 	BlockNumber      int64

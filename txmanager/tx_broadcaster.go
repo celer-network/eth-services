@@ -1,7 +1,6 @@
 package txmanager
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"math/big"
@@ -27,8 +26,8 @@ import (
 // into the chain falls on the shoulders of the TxConfirmer.
 //
 // What TxBroadcaster does guarantee is:
-// - a monotonic series of increasing nonces for txes that can all eventually be confirmed if you retry enough times
-// - transition of txes out of unstarted into either fatal_error or unconfirmed
+// - a monotonic series of increasing nonces for txs that can all eventually be confirmed if you retry enough times
+// - transition of txs out of unstarted into either fatal_error or unconfirmed
 // - existence of a saved tx_attempt
 type TxBroadcaster interface {
 	RegisterAccount(address gethCommon.Address) error
@@ -94,8 +93,11 @@ func (tb *txBroadcaster) RegisterAccount(address gethCommon.Address) error {
 		return err
 	}
 	storedAccount := &models.Account{
-		Address:   account.Address,
-		NextNonce: -1,
+		Address:        account.Address,
+		NextNonce:      -1,
+		PendingTxIDs:   make([]uuid.UUID, 0),
+		CompletedTxIDs: make([]uuid.UUID, 0),
+		ErroredTxIDs:   make([]uuid.UUID, 0),
 	}
 	return tb.store.PutAccount(storedAccount)
 }
@@ -108,7 +110,7 @@ func (tb *txBroadcaster) AddTx(
 	encodedPayload []byte,
 	gasLimit uint64,
 ) error {
-	err := tb.store.AddTx(txID, from, to, value, encodedPayload, gasLimit)
+	err := tb.store.AddTx(txID, from, to, encodedPayload, value, gasLimit)
 	if err != nil {
 		return err
 	}
@@ -199,9 +201,10 @@ func (tb *txBroadcaster) ProcessUnstartedTxs(account *models.Account) error {
 
 // NOTE: This MUST NOT be run concurrently for the same address or it could
 // result in undefined state or deadlocks.
-// First handle any in_progress transactions left over from last time.
-// Then keep looking up unstarted transactions and processing them until there are none remaining.
+// First handle any in_progress txs left over from last time.
+// Then keep looking up unstarted txs and processing them until there are none remaining.
 func (tb *txBroadcaster) processUnstartedTxs(fromAddress gethCommon.Address) error {
+	const errStr = "processUnstartedTxs failed"
 	var n uint = 0
 	mark := time.Now()
 	defer func() {
@@ -216,13 +219,13 @@ func (tb *txBroadcaster) processUnstartedTxs(fromAddress gethCommon.Address) err
 	}()
 
 	if err := tb.handleAnyInProgressTx(fromAddress); err != nil {
-		return errors.Wrap(err, "processUnstartedTxs failed")
+		return errors.Wrap(err, errStr)
 	}
 
 	for {
-		tx, err := tb.nextUnstartedTxWithNonce(fromAddress)
+		tx, err := tb.assignNonceToNextUnstartedTx(fromAddress)
 		if err != nil {
-			return errors.Wrap(err, "processUnstartedTxs failed")
+			return errors.Wrap(err, errStr)
 		}
 		if tx == nil {
 			return nil
@@ -230,14 +233,14 @@ func (tb *txBroadcaster) processUnstartedTxs(fromAddress gethCommon.Address) err
 		n++
 		attempt, err := newAttempt(tb.keyStore, tb.config, tx, tb.config.DefaultGasPrice)
 		if err != nil {
-			return errors.Wrap(err, "processUnstartedTxs failed")
+			return errors.Wrap(err, errStr)
 		}
-		if err := tb.saveInProgressTx(tx, attempt); err != nil {
-			return errors.Wrap(err, "processUnstartedTxs failed")
+		if err := tb.saveInProgressTxWithAttempt(tx, attempt); err != nil {
+			return errors.Wrap(err, errStr)
 		}
 
 		if err := tb.handleInProgressTx(tx, attempt); err != nil {
-			return errors.Wrap(err, "processUnstartedTxs failed")
+			return errors.Wrap(err, errStr)
 		}
 	}
 }
@@ -245,13 +248,21 @@ func (tb *txBroadcaster) processUnstartedTxs(fromAddress gethCommon.Address) err
 // handleInProgressTx checks if there is any transaction
 // in_progress and if so, finishes the job
 func (tb *txBroadcaster) handleAnyInProgressTx(fromAddress gethCommon.Address) error {
+	const errStr = "handleAnyInProgressTx failed"
 	tx, err := tb.getInProgressTx(fromAddress)
 	if err != nil {
-		return errors.Wrap(err, "handleAnyInProgressTx failed")
+		return errors.Wrap(err, errStr)
 	}
 	if tx != nil {
-		if err := tb.handleInProgressTx(tx, &tx.TxAttempts[0]); err != nil {
-			return errors.Wrap(err, "handleAnyInProgressTx failed")
+		// BEGIN DEBUG
+		tb.logger.Debug("handle in_progress tx")
+		// END DEBUG
+		attempt, getAttemptErr := tb.store.GetTxAttempt(tx.TxAttemptIDs[0])
+		if getAttemptErr != nil {
+			return errors.Wrap(getAttemptErr, errStr)
+		}
+		if err := tb.handleInProgressTx(tx, attempt); err != nil {
+			return errors.Wrap(err, errStr)
 		}
 	}
 	return nil
@@ -262,21 +273,34 @@ func (tb *txBroadcaster) handleAnyInProgressTx(fromAddress gethCommon.Address) e
 // the program crashed in the middle of the ProcessUnstartedTxs loop.
 // It may or may not have been broadcast to an eth node.
 func (tb *txBroadcaster) getInProgressTx(fromAddress gethCommon.Address) (*models.Tx, error) {
+	errStr := "getInProgress failed"
 	tx, err := tb.store.GetOneInProgressTx(fromAddress)
 	if err != nil {
 		if err == store.ErrNotFound {
+			// BEGIN DEBUG
+			tb.logger.Debug("no in_progress tx")
+			// END DEBUG
 			return nil, nil
 		}
-		return nil, err
+		return nil, errors.Wrap(err, errStr)
 	}
-	if len(tx.TxAttempts) != 1 || tx.TxAttempts[0].State != models.TxAttemptStateInProgress {
-		return nil, errors.Errorf("invariant violation: expected in_progress transaction %v to have exactly one unsent attempt. "+
-			"Your database is in an inconsistent state and the program will not function correctly until the problem is resolved", tx.ID)
+	errInconsistent := errors.Wrap(errors.Errorf("invariant violation: expected in_progress tx %v to have exactly one unsent attempt. "+
+		"Your database is in an inconsistent state and the program will not function correctly until the problem is resolved", tx.ID), errStr)
+	if len(tx.TxAttemptIDs) != 1 {
+		return nil, errors.Wrap(errInconsistent, errStr)
 	}
-	return tx, errors.Wrap(err, "getInProgressTx failed")
+	attempt, getAttemptErr := tb.store.GetTxAttempt(tx.TxAttemptIDs[0])
+	if getAttemptErr != nil {
+		return nil, errors.Wrap(err, errStr)
+	}
+	if attempt.State != models.TxAttemptStateInProgress {
+		tb.logger.Error("HERE ", attempt.State)
+		return nil, errors.Wrap(errInconsistent, errStr)
+	}
+	return tx, nil
 }
 
-// There can be at most one in_progress transaction per address.
+// There can be at most one in_progress tx per address.
 // Here we complete the job that we didn't finish last time.
 func (tb *txBroadcaster) handleInProgressTx(tx *models.Tx, attempt *models.TxAttempt) error {
 	if tx.State != models.TxStateInProgress {
@@ -285,12 +309,15 @@ func (tb *txBroadcaster) handleInProgressTx(tx *models.Tx, attempt *models.TxAtt
 
 	ctx, cancel := context.WithTimeout(context.Background(), maxEthNodeRequestTime)
 	defer cancel()
-	sendError := sendTransaction(ctx, tb.ethClient, attempt, tb.logger)
+	// BEGIN DEBUG
+	tb.logger.Debugw("handleInProgressTx#sendingTx", "tx", tx.ID, "attempt", attempt.ID)
+	// END DEBUG
+	sendError := sendTx(ctx, tb.ethClient, attempt, tb.logger)
 
 	if sendError.Fatal() {
 		tx.Error = sendError.Error()
 		// Attempt is thrown away in this case; we don't need it since it never got accepted by a node
-		return tb.saveFatallyErroredTransaction(tx)
+		return tb.saveFatallyErroredTx(tx)
 	}
 
 	if sendError.IsNonceTooLowError() || sendError.IsReplacementUnderpriced() {
@@ -300,7 +327,7 @@ func (tb *txBroadcaster) handleInProgressTx(tx *models.Tx, attempt *models.TxAtt
 		//
 		// This is resuming a previous crashed run. In this scenario, it is
 		// likely that our previous transaction was the one who was confirmed,
-		// in which case we hand it off to the eth confirmer to get the
+		// in which case we hand it off to the TxConfirmer to get the
 		// receipt.
 		//
 		// SCENARIO 2
@@ -325,7 +352,7 @@ func (tb *txBroadcaster) handleInProgressTx(tx *models.Tx, attempt *models.TxAtt
 		// calling SendTransaction().
 		//
 		// In all scenarios, the correct thing to do is assume success for now
-		// and hand off to the eth confirmer to get the receipt (or mark as
+		// and hand off to the TxConfirmer to get the receipt (or mark as
 		// failed).
 		sendError = nil
 	}
@@ -355,39 +382,48 @@ func (tb *txBroadcaster) handleInProgressTx(tx *models.Tx, attempt *models.TxAtt
 
 // Finds next transaction in the queue, assigns a nonce, and moves it to "in_progress" state ready for broadcast.
 // Returns nil if no transactions are in queue
-func (tb *txBroadcaster) nextUnstartedTxWithNonce(fromAddress gethCommon.Address) (*models.Tx, error) {
+func (tb *txBroadcaster) assignNonceToNextUnstartedTx(fromAddress gethCommon.Address) (*models.Tx, error) {
+	errStr := "assignNonceToNextUnstartedTx failed"
 	tx, err := tb.getNextUnstartedTx(fromAddress)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			// Finish. No more transactions left to process. Hoorah!
 			return nil, nil
 		}
-		return nil, errors.Wrap(err, "getNextUnstartedTx failed")
+		return nil, errors.Wrap(err, errStr)
 	}
 	tb.logger.Debugw("nextUnstartedTxWithNonce", "id", tx.ID, "state", tx.State)
 
 	nonce, err := tb.getNextNonceWithInitialLoad(tx.FromAddress)
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, errStr)
 	}
+	// BEGIN DEBUG
+	tb.logger.Debugw("assigning nonce", "nonce", nonce)
+	// END DEBUG
 	tx.Nonce = nonce
 	return tx, nil
 }
 
-func (tb *txBroadcaster) saveInProgressTx(tx *models.Tx, attempt *models.TxAttempt) error {
+func (tb *txBroadcaster) saveInProgressTxWithAttempt(tx *models.Tx, attempt *models.TxAttempt) error {
+	errStr := "saveInProgressTxWithAttempt failed"
 	if tx.State != models.TxStateUnstarted {
-		return errors.Errorf("can only transition to in_progress from unstarted, transaction is currently %s", tx.State)
+		return errors.Wrap(errors.Errorf("can only transition to in_progress from unstarted, transaction is currently %s", tx.State), errStr)
 	}
 	if attempt.State != models.TxAttemptStateInProgress {
-		return errors.New("attempt state must be in_progress")
+		return errors.Wrap(errors.New("expect attempt state to be in_progress"), errStr)
+	}
+	err := tb.store.PutTxAttempt(attempt)
+	if err != nil {
+		return errors.Wrap(err, errStr)
 	}
 	tx.State = models.TxStateInProgress
-	attempts := tx.TxAttempts
-	attempts = append(attempts, *attempt)
-	tx.TxAttempts = attempts
-	err := tb.store.PutTx(tx)
+	attemptIDs := tx.TxAttemptIDs
+	attemptIDs = append(attemptIDs, attempt.ID)
+	tx.TxAttemptIDs = attemptIDs
+	err = tb.store.PutTx(tx)
 	if err != nil {
-		return errors.Wrap(err, "saveInProgressTx failed")
+		return errors.Wrap(err, errStr)
 	}
 	return nil
 }
@@ -399,35 +435,34 @@ func (tb *txBroadcaster) getNextUnstartedTx(fromAddress gethCommon.Address) (*mo
 }
 
 func (tb *txBroadcaster) saveUnconfirmed(tx *models.Tx, attempt *models.TxAttempt) error {
+	// BEGIN DEBUG
+	tb.logger.Debug("saveUnconfirmed called")
+	// END DEBUG
+	errStr := "saveUnconfirmed failed"
 	if tx.State != models.TxStateInProgress {
-		return errors.Errorf("can only transition to unconfirmed from in_progress, transaction is currently %s", tx.State)
+		return errors.Wrap(errors.Errorf("can only transition to unconfirmed from in_progress, tx is currently %s", tx.State), errStr)
 	}
 	if attempt.State != models.TxAttemptStateInProgress {
-		return errors.New("attempt must be in in_progress state")
+		return errors.Wrap(errors.New("expect attempt to be in in_progress state"), errStr)
 	}
 	tb.logger.Debugw("TxBroadcaster: successfully broadcast transaction", "TxID", tx.ID, "txHash", attempt.Hash.Hex())
 	tx.State = models.TxStateUnconfirmed
 	// Update state
-	for i, currAttempt := range tx.TxAttempts {
-		if bytes.Equal(currAttempt.ID[:], attempt.ID[:]) {
-			tx.TxAttempts[i].State = models.TxAttemptStateBroadcast
-			break
-		}
-	}
-	err := tb.store.PutTx(tx)
-	if err != nil {
-		return errors.Wrap(err, "saveUnconfirmed failed to save tx")
-	}
+	attempt.State = models.TxAttemptStateBroadcast
 	// BEGIN DEBUG
-	txs, _ := tb.store.GetTxs(tx.FromAddress)
-	for _, tx := range txs {
-		tb.logger.Debugw("saveUnconfirmed all txs", "id", tx.ID, "state", tx.State)
-	}
+	tb.logger.Debugw("saveUnConfirmed#PutTxAttempt", "attemptID", attempt.ID)
 	// END DEBUG
-
+	err := tb.store.PutTxAttempt(attempt)
+	if err != nil {
+		return errors.Wrap(err, errStr)
+	}
+	err = tb.store.PutTx(tx)
+	if err != nil {
+		return errors.Wrap(err, errStr)
+	}
 	err = tb.store.SetNextNonce(tx.FromAddress, tx.Nonce+1)
 	if err != nil {
-		return errors.Wrap(err, "saveUnconfirmed failed to update nonce")
+		return errors.Wrap(err, errStr)
 	}
 	return nil
 }
@@ -455,21 +490,28 @@ func (tb *txBroadcaster) tryAgainWithHigherGasPrice(sendError *client.SendError,
 	return tb.handleInProgressTx(tx, replacementAttempt)
 }
 
-func (tb *txBroadcaster) saveFatallyErroredTransaction(tx *models.Tx) error {
+func (tb *txBroadcaster) saveFatallyErroredTx(tx *models.Tx) error {
+	errStr := "saveFatallyErroredTx failed"
 	if tx.State != models.TxStateInProgress {
-		return errors.Errorf("can only transition to fatal_error from in_progress, transaction is currently %s", tx.State)
+		return errors.Wrap(errors.Errorf("can only transition to fatal_error from in_progress, transaction is currently %s", tx.State), errStr)
 	}
 	if tx.Error == "" {
-		return errors.New("expected error field to be set")
+		return errors.Wrap(errors.New("expected error field to be set"), errStr)
 	}
 	tb.logger.Errorw("TxBroadcaster: fatal error sending transaction", "TxID", tx.ID, "error", tx.Error)
 	tx.Nonce = -1
 	tx.State = models.TxStateFatalError
 	// Clear TxAttempts
-	tx.TxAttempts = nil
+	for _, attemptID := range tx.TxAttemptIDs {
+		deleteAttemptErr := tb.store.DeleteTxAttempt(attemptID)
+		if deleteAttemptErr != nil {
+			return errors.Wrap(deleteAttemptErr, errStr)
+		}
+	}
+	tx.TxAttemptIDs = make([]uuid.UUID, 0)
 	err := tb.store.PutTx(tx)
 	if err != nil {
-		return errors.Wrap(err, "saveFatallyErroredTransaction failed to save tx")
+		return errors.Wrap(err, errStr)
 	}
 	return nil
 }
@@ -478,6 +520,9 @@ func (tb *txBroadcaster) saveFatallyErroredTransaction(tx *models.Tx) error {
 // It loads it from the database, or if this is a brand new key, queries the eth node for the latest nonce
 func (tb *txBroadcaster) getNextNonceWithInitialLoad(address gethCommon.Address) (int64, error) {
 	nonce, err := tb.store.GetNextNonce(address)
+	// BEGIN DEBUG
+	tb.logger.Debugw("getNextNonceWithInitialLoad", "address", address, "nonce", nonce)
+	// END DEBUG
 	if err != nil {
 		return 0, err
 	}
@@ -488,19 +533,20 @@ func (tb *txBroadcaster) getNextNonceWithInitialLoad(address gethCommon.Address)
 }
 
 func (tb *txBroadcaster) loadAndSaveNonce(address gethCommon.Address) (int64, error) {
+	errStr := "loadAndSaveNonce failed"
 	tb.logger.Debugw("TxBroadcaster: loading next nonce from eth node", "address", address.Hex())
 	nonce, err := tb.loadInitialNonceFromEthClient(address)
 	if err != nil {
-		return 0, errors.Wrap(err, "loadAndSaveNonce failed to loadInitialNonceFromEthClient")
+		return 0, errors.Wrap(err, errStr)
 	}
 	account, err := tb.store.GetAccount(address)
 	if err != nil {
-		return 0, errors.Wrap(err, "loadAndSaveNonce failed to get account")
+		return 0, errors.Wrap(err, errStr)
 	}
 	account.NextNonce = int64(nonce)
 	err = tb.store.PutAccount(account)
 	if err != nil {
-		return 0, errors.Wrap(err, "loadAndSaveNonce failed to put account")
+		return 0, errors.Wrap(err, errStr)
 	}
 	if nonce == 0 {
 		tb.logger.Infow(

@@ -32,7 +32,7 @@ var (
 type TxConfirmer interface {
 	subscription.HeadTrackable
 
-	GetTx(fromAddress gethCommon.Address, txID uuid.UUID) (*models.Tx, error)
+	GetTx(txID uuid.UUID) (*models.Tx, error)
 }
 
 // TxConfirmer is a broad service which performs four different tasks in sequence on every new longest chain
@@ -67,8 +67,8 @@ func NewTxConfirmer(
 
 var _ TxConfirmer = (*txConfirmer)(nil)
 
-func (tc *txConfirmer) GetTx(fromAddress gethCommon.Address, txID uuid.UUID) (*models.Tx, error) {
-	return tc.store.GetTx(fromAddress, txID)
+func (tc *txConfirmer) GetTx(txID uuid.UUID) (*models.Tx, error) {
+	return tc.store.GetTx(txID)
 }
 
 // Do nothing on connect, simply wait for the next head
@@ -162,7 +162,7 @@ func (tc *txConfirmer) CheckForReceipts(ctx context.Context, blockNum int64) err
 	}
 
 	if err := tc.markOldTxsMissingReceiptAsErrored(ctx, blockNum); err != nil {
-		return errors.Wrap(err, "unable to confirm buried unconfirmed Txes")
+		return errors.Wrap(err, "unable to confirm buried unconfirmed txs")
 	}
 
 	return nil
@@ -190,7 +190,15 @@ func (tc *txConfirmer) fetchReceipts(ctx context.Context, chTxs <-chan *models.T
 		if !ok {
 			return
 		}
-		for i, attempt := range tx.TxAttempts {
+		for _, attemptID := range tx.TxAttemptIDs {
+			attempt, err := tc.store.GetTxAttempt(attemptID)
+			if err != nil {
+				tc.logger.Errorw("TxConfirmer#fetchReceipts: GetTxAttempt failed",
+					"txHash", attempt.Hash.Hex(),
+					"err", err,
+				)
+				break
+			}
 			// NOTE: This could conceivably be optimized even further at the
 			// expense of slightly higher load for the remote eth node, by
 			// batch requesting all receipts at once
@@ -222,11 +230,23 @@ func (tc *txConfirmer) fetchReceipts(ctx context.Context, chTxs <-chan *models.T
 						"err", err,
 					)
 				}
-				tx.TxAttempts[i].Receipts = append(tx.TxAttempts[i].Receipts, *serializedReceipt)
+				err = tc.store.PutReceipt(serializedReceipt)
+				if err != nil {
+					tc.logger.Errorw("TxConfirmer#fetchReceipts: PutReceipt failed",
+						"err", err,
+					)
+				}
+				attempt.ReceiptIDs = append(attempt.ReceiptIDs, serializedReceipt.ID)
+				err = tc.store.PutTxAttempt(attempt)
+				if err != nil {
+					tc.logger.Errorw("TxConfirmer#fetchReceipts: PutTxAttempt failed",
+						"err", err,
+					)
+				}
 				tx.State = models.TxStateConfirmed
 				err = tc.store.PutTx(tx)
 				if err != nil {
-					tc.logger.Errorw("TxConfirmer#fetchReceipts: saveReceipt failed",
+					tc.logger.Errorw("TxConfirmer#fetchReceipts: PutTx failed",
 						"err", err,
 					)
 				}
@@ -261,6 +281,7 @@ func serializeReceipt(receipt *gethTypes.Receipt) (*models.Receipt, error) {
 		return nil, errors.Wrap(err, "serializeReceipt failed to marshal")
 	}
 	serializedReceipt := models.Receipt{
+		ID:               uuid.New(),
 		Receipt:          receiptJSON,
 		TxHash:           receipt.TxHash,
 		BlockHash:        receipt.BlockHash,
@@ -347,7 +368,7 @@ func (tc *txConfirmer) handleAllInProgressAttempts(ctx context.Context, address 
 		return errors.Wrap(err, "GetInProgressTxAttempts failed")
 	}
 	for _, attempt := range attempts {
-		tx, err := tc.store.GetTx(address, attempt.TxID)
+		tx, err := tc.store.GetTx(attempt.TxID)
 		if err != nil {
 			return errors.Wrap(err, "handleInProgressAttempt cannot get tx")
 		}
@@ -359,15 +380,19 @@ func (tc *txConfirmer) handleAllInProgressAttempts(ctx context.Context, address 
 }
 
 func (tc *txConfirmer) newAttemptWithGasBump(tx *models.Tx) (attempt *models.TxAttempt, err error) {
+	errStr := "newAttemptWithGasBump failed"
 	var bumpedGasPrice *big.Int
-	numAttempts := len(tx.TxAttempts)
+	numAttempts := len(tx.TxAttemptIDs)
 	if numAttempts > 0 {
-		previousAttempt := tx.TxAttempts[numAttempts-1]
+		previousAttempt, getPreviousAttemptErr := tc.store.GetTxAttempt(tx.TxAttemptIDs[numAttempts-1])
+		if getPreviousAttemptErr != nil {
+			return nil, errors.Wrap(getPreviousAttemptErr, errStr)
+		}
 		if previousAttempt.State == models.TxAttemptStateInsufficientEth {
 			// Do not create a new attempt if we ran out of eth last time since bumping gas is pointless
 			// Instead try to resubmit the same attempt at the same price, in the hope that the wallet was funded since our last attempt
 			previousAttempt.State = models.TxAttemptStateInProgress
-			return &previousAttempt, nil
+			return previousAttempt, nil
 		}
 		previousGasPrice := previousAttempt.GasPrice
 		bumpedGasPrice, err = BumpGas(tc.config, previousGasPrice)
@@ -383,7 +408,7 @@ func (tc *txConfirmer) newAttemptWithGasBump(tx *models.Tx) (attempt *models.TxA
 			// Instead try to resubmit the previous attempt, and keep resubmitting until its accepted
 			previousAttempt.BroadcastBeforeBlockNum = -1
 			previousAttempt.State = models.TxAttemptStateInProgress
-			return &previousAttempt, nil
+			return previousAttempt, nil
 		}
 	} else {
 		tc.logger.Errorf("Invariant violation: Tx %v was unconfirmed but didn't have any attempts. "+
@@ -394,10 +419,11 @@ func (tc *txConfirmer) newAttemptWithGasBump(tx *models.Tx) (attempt *models.TxA
 }
 
 func (tc *txConfirmer) saveInProgressAttempt(tx *models.Tx, attempt *models.TxAttempt) error {
+	errStr := "saveInProgressAttempt failed"
 	if attempt.State != models.TxAttemptStateInProgress {
-		return errors.New("saveInProgressAttempt failed: attempt state must be in_progress")
+		return errors.Wrap(errors.New("expect attempt state to be in_progress"), errStr)
 	}
-	return tc.saveAttempt(tx, attempt)
+	return errors.Wrap(tc.store.PutTxAttempt(attempt), errStr)
 }
 
 func (tc *txConfirmer) handleInProgressAttempt(ctx context.Context, tx *models.Tx, attempt *models.TxAttempt, blockHeight int64) error {
@@ -405,7 +431,10 @@ func (tc *txConfirmer) handleInProgressAttempt(ctx context.Context, tx *models.T
 		return errors.Errorf("invariant violation: expected TxAttempt %v to be in_progress, it was %s", attempt.ID, attempt.State)
 	}
 
-	sendError := sendTransaction(ctx, tc.ethClient, attempt, tc.logger)
+	// BEGIN DEBUG
+	tc.logger.Debugw("handleInProgressAttempt#sendingTx", "tx", tx.ID, "attempt", attempt.ID)
+	// END DEBUG
+	sendError := sendTx(ctx, tc.ethClient, attempt, tc.logger)
 
 	if sendError.IsTerminallyUnderpriced() {
 		// This should really not ever happen in normal operation since we
@@ -500,7 +529,7 @@ func (tc *txConfirmer) handleInProgressAttempt(ctx context.Context, tx *models.T
 	}
 
 	if sendError == nil {
-		return tc.saveSentAttempt(tx, attempt)
+		return tc.saveBroadcastAttempt(tx, attempt)
 	}
 
 	// Any other type of error is considered temporary or resolvable manually. The node may have it
@@ -510,57 +539,65 @@ func (tc *txConfirmer) handleInProgressAttempt(ctx context.Context, tx *models.T
 }
 
 func (tc *txConfirmer) deleteInProgressAttempt(tx *models.Tx, attempt *models.TxAttempt) error {
+	errStr := "deleteInProgressAttempt failed"
 	if attempt.State != models.TxAttemptStateInProgress {
-		return errors.New("deleteInProgressAttempt: expected attempt state to be in_progress")
+		return errors.Wrap(errors.New("expected attempt state to be in_progress"), errStr)
 	}
-	return tc.deleteAttempt(tx, attempt)
+	return errors.Wrap(tc.deleteAttempt(tx, attempt), errStr)
 }
 
-func (tc *txConfirmer) saveSentAttempt(tx *models.Tx, attempt *models.TxAttempt) error {
+func (tc *txConfirmer) saveBroadcastAttempt(tx *models.Tx, attempt *models.TxAttempt) error {
+	errStr := "saveBroadcastAttempt failed"
 	if attempt.State != models.TxAttemptStateInProgress {
-		return errors.New("expected state to be in_progress")
+		return errors.Wrap(errors.New("expected attempt state to be in_progress"), errStr)
 	}
+	// BEGIN DEBUG
+	tc.logger.Debug("saveBroadcastAttempt called")
+	// END DEBUG
 	attempt.State = models.TxAttemptStateBroadcast
-	return tc.saveAttempt(tx, attempt)
+	return errors.Wrap(tc.store.PutTxAttempt(attempt), errStr)
 }
 
 func (tc *txConfirmer) saveInsufficientEthAttempt(tx *models.Tx, attempt *models.TxAttempt) error {
+	errStr := "saveInsufficientEthAttempt failed"
 	if !(attempt.State == models.TxAttemptStateInProgress || attempt.State == models.TxAttemptStateInsufficientEth) {
-		return errors.New("expected state to be either in_progress or insufficient_eth")
+		return errors.Wrap(errors.New("expected attempt state to be either in_progress or insufficient_eth"), errStr)
 	}
 	attempt.State = models.TxAttemptStateInsufficientEth
-	return tc.saveAttempt(tx, attempt)
-}
-
-func (tc *txConfirmer) saveAttempt(tx *models.Tx, attempt *models.TxAttempt) error {
-	appendAttempt := true
-	for i, currAttempt := range tx.TxAttempts {
-		if bytes.Equal(currAttempt.ID[:], attempt.ID[:]) {
-			appendAttempt = false
-			tx.TxAttempts[i] = *attempt
-			break
-		}
-	}
-	if appendAttempt {
-		tx.TxAttempts = append(tx.TxAttempts, *attempt)
-	}
-	return errors.Wrap(tc.store.PutTx(tx), "saveAttempt failed")
+	return errors.Wrap(tc.store.PutTxAttempt(attempt), errStr)
 }
 
 func (tc *txConfirmer) deleteAttempt(tx *models.Tx, attempt *models.TxAttempt) error {
+	errStr := "deleteAttempt failed"
+	// Update TxAttemptIDs
 	index := -1
-	for i, currAttempt := range tx.TxAttempts {
-		if bytes.Equal(currAttempt.ID[:], attempt.ID[:]) {
+	for i, currAttemptID := range tx.TxAttemptIDs {
+		if bytes.Equal(currAttemptID[:], attempt.ID[:]) {
 			index = i
 			break
 		}
 	}
-	if index != -1 {
-		copy(tx.TxAttempts[index:], tx.TxAttempts[index+1:])
-		tx.TxAttempts = tx.TxAttempts[:len(tx.TxAttempts)-1]
-		return errors.Wrap(tc.store.PutTx(tx), "deleteAttempt failed")
+	if index == -1 {
+		return errors.Wrap(errors.New("attempt not found"), errStr)
 	}
-	return errors.New("deleteAttempt: attempt not found")
+	copy(tx.TxAttemptIDs[index:], tx.TxAttemptIDs[index+1:])
+	tx.TxAttemptIDs = tx.TxAttemptIDs[:len(tx.TxAttemptIDs)-1]
+	putTxErr := tc.store.PutTx(tx)
+	if putTxErr != nil {
+		return errors.Wrap(putTxErr, errStr)
+	}
+	// Remove receipts if any
+	for _, receiptID := range attempt.ReceiptIDs {
+		deleteReceiptErr := tc.store.DeleteReceipt(receiptID)
+		if deleteReceiptErr != nil {
+			return errors.Wrap(deleteReceiptErr, errStr)
+		}
+	}
+	deleteAttemptErr := tc.store.DeleteTxAttempt(attempt.ID)
+	if deleteAttemptErr != nil {
+		return errors.Wrap(deleteAttemptErr, errStr)
+	}
+	return nil
 }
 
 // EnsureConfirmedTxsInLongestChain finds all confirmed Txs up to the depth
@@ -569,6 +606,8 @@ func (tc *txConfirmer) deleteAttempt(tx *models.Tx, attempt *models.TxAttempt) e
 //
 // If any of the confirmed transactions does not have a receipt in the chain, it has been
 // re-org'd out and will be rebroadcast.
+//
+// TODO: Mark txs finalized if confirmed for long enough.
 func (tc *txConfirmer) EnsureConfirmedTxsInLongestChain(ctx context.Context, accounts []*models.Account, head *models.Head) error {
 	txs, err := tc.store.GetTxsConfirmedAtOrAboveBlockHeight(head.EarliestInChain().Number)
 	if err != nil {
@@ -576,7 +615,12 @@ func (tc *txConfirmer) EnsureConfirmedTxsInLongestChain(ctx context.Context, acc
 	}
 
 	for _, tx := range txs {
-		if !hasReceiptInLongestChain(tx, head) {
+		hasReceipt, hasReceiptErr := tc.hasReceiptInLongestChain(tx, head)
+		if hasReceiptErr != nil {
+			return errors.Wrap(hasReceiptErr, "hasReceiptInLongestChain failed")
+
+		}
+		if !hasReceipt {
 			if err := tc.markForRebroadcast(tx); err != nil {
 				return errors.Wrapf(err, "markForRebroadcast failed for tx %v", tx.ID)
 			}
@@ -607,68 +651,93 @@ func (tc *txConfirmer) EnsureConfirmedTxsInLongestChain(ctx context.Context, acc
 	return multierr.Combine(errors...)
 }
 
-func hasReceiptInLongestChain(tx *models.Tx, head *models.Head) bool {
+func (tc *txConfirmer) hasReceiptInLongestChain(tx *models.Tx, head *models.Head) (bool, error) {
 	for {
-		for _, attempt := range tx.TxAttempts {
-			for _, receipt := range attempt.Receipts {
+		for _, attemptID := range tx.TxAttemptIDs {
+			attempt, getAttemptErr := tc.store.GetTxAttempt(attemptID)
+			if getAttemptErr != nil {
+				return false, getAttemptErr
+			}
+			for _, receiptID := range attempt.ReceiptIDs {
+				receipt, getReceiptErr := tc.store.GetReceipt(receiptID)
+				if getReceiptErr != nil {
+					return false, getReceiptErr
+				}
 				if receipt.BlockHash == head.Hash && receipt.BlockNumber == head.Number {
-					return true
+					return true, nil
 				}
 			}
 		}
 		if head.Parent == nil {
-			return false
+			return false, nil
 		}
 		head = head.Parent
 	}
 }
 
 func (tc *txConfirmer) markForRebroadcast(tx *models.Tx) error {
-	numAttempts := len(tx.TxAttempts)
+	numAttempts := len(tx.TxAttemptIDs)
 	if numAttempts == 0 {
 		return errors.Errorf("invariant violation: expected Tx %v to have at least one attempt", tx.ID)
 	}
 
 	// Rebroadcast the one with the highest gas price
-	attempt := tx.TxAttempts[numAttempts-1]
+	attemptID := tx.TxAttemptIDs[numAttempts-1]
+	attempt, err := tc.store.GetTxAttempt(attemptID)
+	if err != nil {
+		return err
+	}
 
 	// Put it back in progress and delete all receipts (they do not apply to the new chain)
-	deleteAllReceipts(tx)
-	err := unconfirmTx(tx)
+	err = tc.deleteAllReceipts(tx)
+	if err != nil {
+		return err
+	}
+	err = tc.unconfirmTx(tx)
 	if err != nil {
 		return errors.Wrapf(err, "unconfirmTx failed for tx %v", tx.ID)
 	}
-	err = unbroadcastAttempt(tx, &attempt)
+	err = tc.unbroadcastAttempt(attempt)
 	if err != nil {
 		return errors.Wrapf(err, "unbroadcastAttempt failed for tx %v", tx.ID)
 	}
-	err = tc.store.PutTx(tx)
 	return errors.Wrap(err, "markForRebroadcast failed")
 }
 
-func deleteAllReceipts(tx *models.Tx) {
-	for i := range tx.TxAttempts {
-		tx.TxAttempts[i].Receipts = make([]models.Receipt, 0)
+func (tc *txConfirmer) deleteAllReceipts(tx *models.Tx) error {
+	for _, attemptID := range tx.TxAttemptIDs {
+		attempt, getAttemptErr := tc.store.GetTxAttempt(attemptID)
+		if getAttemptErr != nil {
+			return getAttemptErr
+		}
+		for _, receiptID := range attempt.ReceiptIDs {
+			deleteErr := tc.store.DeleteReceipt(receiptID)
+			if deleteErr != nil {
+				return deleteErr
+			}
+		}
+		attempt.ReceiptIDs = make([]uuid.UUID, 0)
+		putAttemptErr := tc.store.PutTxAttempt(attempt)
+		if putAttemptErr != nil {
+			return putAttemptErr
+		}
 	}
+	return nil
 }
 
-func unconfirmTx(tx *models.Tx) error {
+func (tc *txConfirmer) unconfirmTx(tx *models.Tx) error {
 	if tx.State != models.TxStateConfirmed {
 		return errors.New("expected Tx.State to be confirmed")
 	}
 	tx.State = models.TxStateUnconfirmed
-	return nil
+	return tc.store.PutTx(tx)
 }
 
-func unbroadcastAttempt(tx *models.Tx, attempt *models.TxAttempt) error {
+func (tc *txConfirmer) unbroadcastAttempt(attempt *models.TxAttempt) error {
 	if attempt.State != models.TxAttemptStateBroadcast {
 		return errors.New("expected TxAttempt.State to be broadcast")
 	}
-	for i, currAttempt := range tx.TxAttempts {
-		if bytes.Equal(currAttempt.ID[:], attempt.ID[:]) {
-			tx.TxAttempts[i].State = models.TxAttemptStateInProgress
-			tx.TxAttempts[i].BroadcastBeforeBlockNum = -1
-		}
-	}
-	return nil
+	attempt.State = models.TxAttemptStateInProgress
+	attempt.BroadcastBeforeBlockNum = -1
+	return tc.store.PutTxAttempt(attempt)
 }

@@ -36,29 +36,32 @@ type Store interface {
 	// Chain returns the chain of heads starting at hash and up to lookback parents.
 	Chain(hash common.Hash, lookback int64) (models.Head, error)
 
+	GetAccount(address common.Address) (*models.Account, error)
 	// GetAccounts gets the list of accounts
 	GetAccounts() ([]*models.Account, error)
-
-	GetAccount(address common.Address) (*models.Account, error)
-
 	PutAccount(account *models.Account) error
+
+	GetTx(id uuid.UUID) (*models.Tx, error)
+	PutTx(tx *models.Tx) error
+
+	GetTxAttempt(id uuid.UUID) (*models.TxAttempt, error)
+	PutTxAttempt(attempt *models.TxAttempt) error
+	DeleteTxAttempt(id uuid.UUID) error
+
+	GetReceipt(id uuid.UUID) (*models.Receipt, error)
+	PutReceipt(receipt *models.Receipt) error
+	DeleteReceipt(id uuid.UUID) error
 
 	AddTx(
 		txID uuid.UUID,
 		fromAddress common.Address,
 		toAddress common.Address,
-		value *big.Int,
 		encodedPayload []byte,
+		value *big.Int,
 		gasLimit uint64,
 	) error
 
 	GetOneInProgressTx(fromAddress common.Address) (*models.Tx, error)
-
-	GetTx(fromAddress common.Address, id uuid.UUID) (*models.Tx, error)
-
-	GetTxs(fromAddress common.Address) ([]*models.Tx, error)
-
-	PutTx(tx *models.Tx) error
 
 	GetNextNonce(address common.Address) (int64, error)
 
@@ -103,11 +106,8 @@ type Store interface {
 
 	GetInProgressAttempts(address common.Address) ([]*models.TxAttempt, error)
 
-	PutJob(job *models.Job) error
-
 	GetJob(jobID uuid.UUID) (*models.Job, error)
-
+	PutJob(job *models.Job) error
 	DeleteJob(jobID uuid.UUID) error
-
 	GetUnhandledJobIDs() ([]uuid.UUID, error)
 }
