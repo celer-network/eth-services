@@ -53,6 +53,7 @@ func TestTxBroadcaster_ProcessUnstartedTxs_Success(t *testing.T) {
 		_, otherAddress := esTesting.MustAddRandomAccountToKeystore(t, store, keyStore)
 
 		tx := &models.Tx{
+			ID:             uuid.New(),
 			FromAddress:    otherAddress,
 			ToAddress:      toAddress,
 			EncodedPayload: encodedPayload,
@@ -70,6 +71,7 @@ func TestTxBroadcaster_ProcessUnstartedTxs_Success(t *testing.T) {
 		errStr := "some error"
 
 		txUnconfirmed := &models.Tx{
+			ID:             uuid.New(),
 			Nonce:          nonce,
 			FromAddress:    fromAddress,
 			ToAddress:      toAddress,
@@ -80,6 +82,7 @@ func TestTxBroadcaster_ProcessUnstartedTxs_Success(t *testing.T) {
 			State:          models.TxStateUnconfirmed,
 		}
 		txWithError := &models.Tx{
+			ID:             uuid.New(),
 			Nonce:          -1,
 			FromAddress:    fromAddress,
 			ToAddress:      toAddress,
@@ -98,6 +101,7 @@ func TestTxBroadcaster_ProcessUnstartedTxs_Success(t *testing.T) {
 
 	t.Run("sends 1 tx", func(t *testing.T) {
 		tx := &models.Tx{
+			ID:             uuid.New(),
 			FromAddress:    fromAddress,
 			ToAddress:      toAddress,
 			EncodedPayload: []byte{42, 42, 0},
@@ -123,7 +127,7 @@ func TestTxBroadcaster_ProcessUnstartedTxs_Success(t *testing.T) {
 		// Do the thing
 		require.NoError(t, tb.ProcessUnstartedTxs(account))
 
-		// Check tx and it's attempt
+		// Check tx and its attempt
 		tx, err := store.GetTx(tx.FromAddress, tx.ID)
 		require.NoError(t, err)
 		assert.Empty(t, tx.Error)
@@ -168,6 +172,7 @@ func TestTxBroadcaster_AssignsNonceOnFirstRun(t *testing.T) {
 	dummyAccount := esTesting.MustInsertRandomAccount(t, store)
 
 	tx := &models.Tx{
+		ID:             uuid.New(),
 		FromAddress:    fromAddress,
 		ToAddress:      toAddress,
 		EncodedPayload: []byte{42, 42, 0},

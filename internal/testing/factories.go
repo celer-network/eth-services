@@ -145,6 +145,7 @@ func NewTxAttempt(t *testing.T, txID uuid.UUID) *models.TxAttempt {
 
 	gasPrice := big.NewInt(1)
 	return &models.TxAttempt{
+		ID:       uuid.New(),
 		TxID:     txID,
 		GasPrice: gasPrice,
 		// Just a random signed raw tx that decodes correctly

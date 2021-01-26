@@ -90,7 +90,7 @@ func saveReplacementInProgressAttempt(store esStore.Store, tx *models.Tx, oldAtt
 	if oldAttempt.State != models.TxAttemptStateInProgress || replacementAttempt.State != models.TxAttemptStateInProgress {
 		return errors.New("expected attempts to be in_progress")
 	}
-	if oldAttempt.ID == uuid.Nil {
+	if bytes.Equal(oldAttempt.ID[:], uuid.Nil[:]) {
 		return errors.New("expected oldAttempt to have an ID")
 	}
 
