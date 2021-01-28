@@ -321,7 +321,7 @@ func (store *TMStore) GetTxsConfirmedAtOrAboveBlockHeight(blockNum int64) ([]*mo
 				}
 				for j := len(attempt.ReceiptIDs) - 1; j >= 0; j-- {
 					receiptID := attempt.ReceiptIDs[j]
-					receipt, getReceiptErr := store.GetReceipt(receiptID)
+					receipt, getReceiptErr := store.GetTxReceipt(receiptID)
 					if getReceiptErr != nil {
 						return nil, getReceiptErr
 					}
@@ -375,6 +375,43 @@ func (store *TMStore) GetInProgressAttempts(address common.Address) ([]*models.T
 
 	}
 	return attempts, nil
+}
+
+func (store *TMStore) IsTxConfirmedAtOrBeforeBlockNumber(txID uuid.UUID, blockNumber int64) (bool, error) {
+	tx, err := store.GetTx(txID)
+	if err != nil {
+		return false, err
+	}
+	if tx.State != models.TxStateConfirmed && tx.State != models.TxStateConfirmedMissingReceipt {
+		return false, nil
+	}
+	// TODO: Just checking the last attempt should suffice
+	isConfirmed := false
+	for i := len(tx.TxAttemptIDs) - 1; i >= 0; i-- {
+		attemptID := tx.TxAttemptIDs[i]
+		attempt, getAttemptErr := store.GetTxAttempt(attemptID)
+		if getAttemptErr != nil {
+			return false, getAttemptErr
+		}
+		if attempt.State != models.TxAttemptStateBroadcast {
+			continue
+		}
+		for j := len(attempt.ReceiptIDs) - 1; j >= 0; j-- {
+			receiptID := attempt.ReceiptIDs[j]
+			receipt, getReceiptErr := store.GetTxReceipt(receiptID)
+			if getReceiptErr != nil {
+				return false, getReceiptErr
+			}
+			if receipt.BlockNumber <= blockNumber {
+				isConfirmed = true
+				break
+			}
+		}
+		if isConfirmed {
+			break
+		}
+	}
+	return isConfirmed, nil
 }
 
 func toDecodeTxError(err error) error {

@@ -31,8 +31,6 @@ var (
 
 type TxConfirmer interface {
 	subscription.HeadTrackable
-
-	GetTx(txID uuid.UUID) (*models.Tx, error)
 }
 
 // TxConfirmer is a broad service which performs four different tasks in sequence on every new longest chain
@@ -66,10 +64,6 @@ func NewTxConfirmer(
 }
 
 var _ TxConfirmer = (*txConfirmer)(nil)
-
-func (tc *txConfirmer) GetTx(txID uuid.UUID) (*models.Tx, error) {
-	return tc.store.GetTx(txID)
-}
 
 // Do nothing on connect, simply wait for the next head
 func (tc *txConfirmer) Connect(*models.Head) error {
@@ -230,7 +224,7 @@ func (tc *txConfirmer) fetchReceipts(ctx context.Context, chTxs <-chan *models.T
 						"err", err,
 					)
 				}
-				err = tc.store.PutReceipt(serializedReceipt)
+				err = tc.store.PutTxReceipt(serializedReceipt)
 				if err != nil {
 					tc.logger.Errorw("TxConfirmer#fetchReceipts: PutReceipt failed",
 						"err", err,
@@ -272,7 +266,7 @@ func (tc *txConfirmer) fetchReceipt(ctx context.Context, hash gethCommon.Hash) (
 	return receipt, err
 }
 
-func serializeReceipt(receipt *gethTypes.Receipt) (*models.Receipt, error) {
+func serializeReceipt(receipt *gethTypes.Receipt) (*models.TxReceipt, error) {
 	if receipt.BlockNumber == nil {
 		return nil, errors.Errorf("receipt was missing block number: %#v", receipt)
 	}
@@ -280,7 +274,7 @@ func serializeReceipt(receipt *gethTypes.Receipt) (*models.Receipt, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "serializeReceipt failed to marshal")
 	}
-	serializedReceipt := models.Receipt{
+	serializedReceipt := models.TxReceipt{
 		ID:               uuid.New(),
 		Receipt:          receiptJSON,
 		TxHash:           receipt.TxHash,
@@ -588,7 +582,7 @@ func (tc *txConfirmer) deleteAttempt(tx *models.Tx, attempt *models.TxAttempt) e
 	}
 	// Remove receipts if any
 	for _, receiptID := range attempt.ReceiptIDs {
-		deleteReceiptErr := tc.store.DeleteReceipt(receiptID)
+		deleteReceiptErr := tc.store.DeleteTxReceipt(receiptID)
 		if deleteReceiptErr != nil {
 			return errors.Wrap(deleteReceiptErr, errStr)
 		}
@@ -659,7 +653,7 @@ func (tc *txConfirmer) hasReceiptInLongestChain(tx *models.Tx, head *models.Head
 				return false, getAttemptErr
 			}
 			for _, receiptID := range attempt.ReceiptIDs {
-				receipt, getReceiptErr := tc.store.GetReceipt(receiptID)
+				receipt, getReceiptErr := tc.store.GetTxReceipt(receiptID)
 				if getReceiptErr != nil {
 					return false, getReceiptErr
 				}
@@ -711,7 +705,7 @@ func (tc *txConfirmer) deleteAllReceipts(tx *models.Tx) error {
 			return getAttemptErr
 		}
 		for _, receiptID := range attempt.ReceiptIDs {
-			deleteErr := tc.store.DeleteReceipt(receiptID)
+			deleteErr := tc.store.DeleteTxReceipt(receiptID)
 			if deleteErr != nil {
 				return deleteErr
 			}

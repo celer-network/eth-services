@@ -1,9 +1,7 @@
 package txmanager
 
 import (
-	"context"
 	"math/big"
-	"time"
 
 	esClient "github.com/celer-network/eth-services/client"
 	esStore "github.com/celer-network/eth-services/store"
@@ -28,11 +26,15 @@ type TxManager interface {
 		gasLimit uint64,
 	) (uuid.UUID, error)
 
+	GetTx(txID uuid.UUID) (*esStoreModels.Tx, error)
+	GetTxAttempt(attemptID uuid.UUID) (*esStoreModels.TxAttempt, error)
+	GetTxReceipt(receiptID uuid.UUID) (*esStoreModels.TxReceipt, error)
+
 	IsTxConfirmedAtOrBeforeBlockNumber(txID uuid.UUID, blockNumber int64) (bool, error)
 
 	AddJob(txID uuid.UUID, metadata []byte) (uuid.UUID, error)
 
-	MonitorJob(jobID uuid.UUID, handler func(job *esStoreModels.Job, tx *esStoreModels.Tx) error)
+	MonitorJob(jobID uuid.UUID, handler JobHandler)
 
 	DeleteJob(jobID uuid.UUID) error
 
@@ -47,7 +49,7 @@ type txManager struct {
 	broadcaster TxBroadcaster
 	confirmer   TxConfirmer
 
-	blockNumberRecorder *blockNumberRecorder
+	jobMonitor *jobMonitor
 }
 
 var _ TxManager = (*txManager)(nil)
@@ -60,22 +62,22 @@ func NewTxManager(
 ) (TxManager, error) {
 	broadcaster := NewTxBroadcaster(ethClient, store, keyStore, config)
 	confirmer := NewTxConfirmer(ethClient, store, keyStore, config)
-	blockNumberRecorder := newBlockNumberRecorder()
+	jobMonitor := newJobMonitor(store, config)
 	headTracker :=
 		subscription.NewHeadTracker(
 			ethClient,
 			store,
 			config,
-			[]subscription.HeadTrackable{confirmer, blockNumberRecorder},
+			[]subscription.HeadTrackable{confirmer, jobMonitor},
 		)
 	return &txManager{
 		store:  store,
 		config: config,
 
-		broadcaster:         broadcaster,
-		confirmer:           confirmer,
-		headTracker:         headTracker,
-		blockNumberRecorder: blockNumberRecorder,
+		broadcaster: broadcaster,
+		confirmer:   confirmer,
+		headTracker: headTracker,
+		jobMonitor:  jobMonitor,
 	}, nil
 }
 
@@ -106,63 +108,20 @@ func (txm *txManager) AddTx(
 	return txID, nil
 }
 
+func (txm *txManager) GetTx(txID uuid.UUID) (*esStoreModels.Tx, error) {
+	return txm.store.GetTx(txID)
+}
+
+func (txm *txManager) GetTxAttempt(attemptID uuid.UUID) (*esStoreModels.TxAttempt, error) {
+	return txm.store.GetTxAttempt(attemptID)
+}
+
+func (txm *txManager) GetTxReceipt(receiptID uuid.UUID) (*esStoreModels.TxReceipt, error) {
+	return txm.store.GetTxReceipt(receiptID)
+}
+
 func (txm *txManager) IsTxConfirmedAtOrBeforeBlockNumber(txID uuid.UUID, blockNumber int64) (bool, error) {
-	tx, err := txm.confirmer.GetTx(txID)
-	if err != nil {
-		return false, err
-	}
-	if tx.State != esStoreModels.TxStateConfirmed && tx.State != esStoreModels.TxStateConfirmedMissingReceipt {
-		return false, nil
-	}
-	// TODO: Just checking the last attempt should suffice
-	isConfirmed := false
-	for i := len(tx.TxAttemptIDs) - 1; i >= 0; i-- {
-		attemptID := tx.TxAttemptIDs[i]
-		attempt, getAttemptErr := txm.store.GetTxAttempt(attemptID)
-		if getAttemptErr != nil {
-			return false, getAttemptErr
-		}
-		if attempt.State != esStoreModels.TxAttemptStateBroadcast {
-			continue
-		}
-		for j := len(attempt.ReceiptIDs) - 1; j >= 0; j-- {
-			receiptID := attempt.ReceiptIDs[j]
-			receipt, getReceiptErr := txm.store.GetReceipt(receiptID)
-			if getReceiptErr != nil {
-				return false, getReceiptErr
-			}
-			if receipt.BlockNumber <= blockNumber {
-				isConfirmed = true
-				break
-			}
-		}
-		if isConfirmed {
-			break
-		}
-	}
-	return isConfirmed, nil
-}
-
-type blockNumberRecorder struct {
-	blockNumber int64
-}
-
-func newBlockNumberRecorder() *blockNumberRecorder {
-	return &blockNumberRecorder{
-		blockNumber: -1,
-	}
-}
-
-func (r *blockNumberRecorder) Connect(*esStoreModels.Head) error {
-	return nil
-}
-
-func (r *blockNumberRecorder) Disconnect() {
-	// pass
-}
-
-func (r *blockNumberRecorder) OnNewLongestChain(ctx context.Context, head esStoreModels.Head) {
-	r.blockNumber = head.Number
+	return txm.store.IsTxConfirmedAtOrBeforeBlockNumber(txID, blockNumber)
 }
 
 func (txm *txManager) AddJob(txID uuid.UUID, metadata []byte) (uuid.UUID, error) {
@@ -180,50 +139,17 @@ func (txm *txManager) AddJob(txID uuid.UUID, metadata []byte) (uuid.UUID, error)
 	return jobID, nil
 }
 
-func (txm *txManager) MonitorJob(jobID uuid.UUID, handler func(job *esStoreModels.Job, tx *esStoreModels.Tx) error) {
-	go func() {
-		// TODO: Add stop mechanism?
-		jobPoller := time.NewTicker(withJitter(txm.config.BlockTime / 2))
-		for {
-			select {
-			case <-jobPoller.C:
-				blockNumber := txm.blockNumberRecorder.blockNumber
-				if blockNumber == -1 {
-					continue
-				}
-				threshold := blockNumber - txm.config.FinalityDepth
-				if threshold < 0 {
-					continue
-				}
-				job, err := txm.store.GetJob(jobID)
-				if err != nil {
-					txm.config.Logger.Error(err)
-					return
-				}
-				confirmed, err := txm.IsTxConfirmedAtOrBeforeBlockNumber(job.TxID, threshold)
-				if err != nil {
-					txm.config.Logger.Error(err)
-					return
-				}
-				tx, err := txm.store.GetTx(job.TxID)
-				if err != nil {
-					txm.config.Logger.Error(err)
-					return
-				}
-				txm.config.Logger.Debugw("confirmed status", "confirmed", confirmed)
-				if confirmed {
-					handler(job, tx)
-					return
-				}
-			}
-		}
-	}()
-}
-
 func (txm *txManager) DeleteJob(jobID uuid.UUID) error {
 	return txm.store.DeleteJob(jobID)
 }
 
 func (txm *txManager) GetUnhandledJobIDs() ([]uuid.UUID, error) {
 	return txm.store.GetUnhandledJobIDs()
+}
+
+func (txm *txManager) MonitorJob(jobID uuid.UUID, handler JobHandler) {
+	m := txm.jobMonitor
+	m.lock.Lock()
+	m.jobs[jobID] = handler
+	m.lock.Unlock()
 }

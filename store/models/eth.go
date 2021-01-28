@@ -90,7 +90,7 @@ type TxAttempt struct {
 	ReceiptIDs              []uuid.UUID
 }
 
-type Receipt struct {
+type TxReceipt struct {
 	ID               uuid.UUID
 	TxHash           common.Hash
 	BlockHash        common.Hash

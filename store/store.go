@@ -48,9 +48,9 @@ type Store interface {
 	PutTxAttempt(attempt *models.TxAttempt) error
 	DeleteTxAttempt(id uuid.UUID) error
 
-	GetReceipt(id uuid.UUID) (*models.Receipt, error)
-	PutReceipt(receipt *models.Receipt) error
-	DeleteReceipt(id uuid.UUID) error
+	GetTxReceipt(id uuid.UUID) (*models.TxReceipt, error)
+	PutTxReceipt(receipt *models.TxReceipt) error
+	DeleteTxReceipt(id uuid.UUID) error
 
 	AddTx(
 		txID uuid.UUID,
@@ -105,6 +105,8 @@ type Store interface {
 	GetTxsConfirmedAtOrAboveBlockHeight(blockNum int64) ([]*models.Tx, error)
 
 	GetInProgressAttempts(address common.Address) ([]*models.TxAttempt, error)
+
+	IsTxConfirmedAtOrBeforeBlockNumber(txID uuid.UUID, blockNumber int64) (bool, error)
 
 	GetJob(jobID uuid.UUID) (*models.Job, error)
 	PutJob(job *models.Job) error

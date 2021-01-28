@@ -17,7 +17,7 @@ type TMStore struct {
 	nsAccount   *tmDB.PrefixDB
 	nsTx        *tmDB.PrefixDB
 	nsTxAttempt *tmDB.PrefixDB
-	nsReceipt   *tmDB.PrefixDB
+	nsTxReceipt *tmDB.PrefixDB
 	nsJob       *tmDB.PrefixDB
 }
 
@@ -30,7 +30,7 @@ func NewTMStore(db tmDB.DB) *TMStore {
 		nsAccount:   tmDB.NewPrefixDB(db, prefixAccount),
 		nsTx:        tmDB.NewPrefixDB(db, prefixTx),
 		nsTxAttempt: tmDB.NewPrefixDB(db, prefixTxAttempt),
-		nsReceipt:   tmDB.NewPrefixDB(db, prefixReceipt),
+		nsTxReceipt: tmDB.NewPrefixDB(db, prefixReceipt),
 		nsJob:       tmDB.NewPrefixDB(db, prefixJob),
 	}
 }
