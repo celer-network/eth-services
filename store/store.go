@@ -48,6 +48,10 @@ type Store interface {
 	PutTxAttempt(attempt *models.TxAttempt) error
 	DeleteTxAttempt(id uuid.UUID) error
 
+	GetAttemptsForTx(tx *models.Tx) ([]*models.TxAttempt, error)
+	AddAttemptToTx(tx *models.Tx, attempt *models.TxAttempt) error
+	ReplaceAttemptInTx(tx *models.Tx, oldAttempt *models.TxAttempt, newAttempt *models.TxAttempt) error
+
 	GetTxReceipt(id uuid.UUID) (*models.TxReceipt, error)
 	PutTxReceipt(receipt *models.TxReceipt) error
 	DeleteTxReceipt(id uuid.UUID) error

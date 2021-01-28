@@ -258,25 +258,7 @@ func (store *TMStore) GetTxsRequiringNewAttempt(
 		if getTxErr != nil {
 			return nil, getTxErr
 		}
-		if tx.State != models.TxStateUnconfirmed {
-			continue
-		}
-		includeTx := true
-		for _, attemptID := range tx.TxAttemptIDs {
-			attempt, getAttemptErr := store.GetTxAttempt(attemptID)
-			if getAttemptErr != nil {
-				return nil, getAttemptErr
-			}
-			includeAttempt := attempt.State != models.TxAttemptStateInsufficientEth &&
-				(attempt.State != models.TxAttemptStateBroadcast ||
-					attempt.BroadcastBeforeBlockNum == int64(-1) ||
-					attempt.BroadcastBeforeBlockNum > blockNum-gasBumpThreshold)
-			if !includeAttempt {
-				includeTx = false
-				break
-			}
-		}
-		if includeTx {
+		if tx.State == models.TxStateUnconfirmed {
 			txs = append(txs, tx)
 		}
 	}
@@ -286,10 +268,41 @@ func (store *TMStore) GetTxsRequiringNewAttempt(
 		return txs[i].Nonce < txs[j].Nonce
 	})
 
-	if depth > 0 && depth < len(txs) {
-		txs = txs[0:depth]
+	limit := len(txs)
+	if depth > 0 && depth < limit {
+		limit = depth
 	}
-	return txs, nil
+
+	var includedTxs []*models.Tx
+
+	for _, tx := range txs[:limit] {
+		tx, getTxErr := store.GetTx(tx.ID)
+		if getTxErr != nil {
+			return nil, getTxErr
+		}
+		if tx.State != models.TxStateUnconfirmed {
+			continue
+		}
+		excludeTx := false
+		for _, attemptID := range tx.TxAttemptIDs {
+			attempt, getAttemptErr := store.GetTxAttempt(attemptID)
+			if getAttemptErr != nil {
+				return nil, getAttemptErr
+			}
+			excludeAttempt := attempt.State != models.TxAttemptStateInsufficientEth &&
+				(attempt.State != models.TxAttemptStateBroadcast ||
+					attempt.BroadcastBeforeBlockNum == int64(-1) ||
+					attempt.BroadcastBeforeBlockNum > blockNum-gasBumpThreshold)
+			if excludeAttempt {
+				excludeTx = true
+				break
+			}
+		}
+		if !excludeTx {
+			includedTxs = append(includedTxs, tx)
+		}
+	}
+	return includedTxs, nil
 }
 
 func (store *TMStore) GetTxsConfirmedAtOrAboveBlockHeight(blockNum int64) ([]*models.Tx, error) {
@@ -308,10 +321,8 @@ func (store *TMStore) GetTxsConfirmedAtOrAboveBlockHeight(blockNum int64) ([]*mo
 			if tx.State != models.TxStateConfirmed && tx.State != models.TxStateConfirmedMissingReceipt {
 				continue
 			}
-			// TODO: Just checking the last attempt should suffice
 			includeTx := false
-			for i := len(tx.TxAttemptIDs) - 1; i >= 0; i-- {
-				attemptID := tx.TxAttemptIDs[i]
+			for _, attemptID := range tx.TxAttemptIDs {
 				attempt, getAttemptErr := store.GetTxAttempt(attemptID)
 				if getAttemptErr != nil {
 					return nil, getAttemptErr
@@ -319,8 +330,8 @@ func (store *TMStore) GetTxsConfirmedAtOrAboveBlockHeight(blockNum int64) ([]*mo
 				if attempt.State != models.TxAttemptStateBroadcast {
 					continue
 				}
-				for j := len(attempt.ReceiptIDs) - 1; j >= 0; j-- {
-					receiptID := attempt.ReceiptIDs[j]
+				for j := len(attempt.TxReceiptIDs) - 1; j >= 0; j-- {
+					receiptID := attempt.TxReceiptIDs[j]
 					receipt, getReceiptErr := store.GetTxReceipt(receiptID)
 					if getReceiptErr != nil {
 						return nil, getReceiptErr
@@ -348,35 +359,6 @@ func (store *TMStore) GetTxsConfirmedAtOrAboveBlockHeight(blockNum int64) ([]*mo
 	return allTxs, nil
 }
 
-func (store *TMStore) GetInProgressAttempts(address common.Address) ([]*models.TxAttempt, error) {
-	account, err := store.GetAccount(address)
-	if err != nil {
-		return nil, err
-	}
-	var attempts []*models.TxAttempt
-	for _, txID := range account.PendingTxIDs {
-		tx, getTxErr := store.GetTx(txID)
-		if getTxErr != nil {
-			return nil, err
-		}
-		if tx.State == models.TxStateConfirmed || tx.State == models.TxStateConfirmedMissingReceipt ||
-			tx.State == models.TxStateUnconfirmed {
-			for _, attemptID := range tx.TxAttemptIDs {
-				attempt, getAttemptErr := store.GetTxAttempt(attemptID)
-				if getAttemptErr != nil {
-					return nil, err
-				}
-				if attempt.State == models.TxAttemptStateInProgress {
-					attempts = append(attempts, attempt)
-				}
-
-			}
-		}
-
-	}
-	return attempts, nil
-}
-
 func (store *TMStore) IsTxConfirmedAtOrBeforeBlockNumber(txID uuid.UUID, blockNumber int64) (bool, error) {
 	tx, err := store.GetTx(txID)
 	if err != nil {
@@ -385,10 +367,8 @@ func (store *TMStore) IsTxConfirmedAtOrBeforeBlockNumber(txID uuid.UUID, blockNu
 	if tx.State != models.TxStateConfirmed && tx.State != models.TxStateConfirmedMissingReceipt {
 		return false, nil
 	}
-	// TODO: Just checking the last attempt should suffice
 	isConfirmed := false
-	for i := len(tx.TxAttemptIDs) - 1; i >= 0; i-- {
-		attemptID := tx.TxAttemptIDs[i]
+	for _, attemptID := range tx.TxAttemptIDs {
 		attempt, getAttemptErr := store.GetTxAttempt(attemptID)
 		if getAttemptErr != nil {
 			return false, getAttemptErr
@@ -396,8 +376,8 @@ func (store *TMStore) IsTxConfirmedAtOrBeforeBlockNumber(txID uuid.UUID, blockNu
 		if attempt.State != models.TxAttemptStateBroadcast {
 			continue
 		}
-		for j := len(attempt.ReceiptIDs) - 1; j >= 0; j-- {
-			receiptID := attempt.ReceiptIDs[j]
+		for j := len(attempt.TxReceiptIDs) - 1; j >= 0; j-- {
+			receiptID := attempt.TxReceiptIDs[j]
 			receipt, getReceiptErr := store.GetTxReceipt(receiptID)
 			if getReceiptErr != nil {
 				return false, getReceiptErr

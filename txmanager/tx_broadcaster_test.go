@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"log"
 	"math/big"
 	"os"
 	"testing"
@@ -22,6 +21,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	gethAccounts "github.com/ethereum/go-ethereum/accounts"
 	gethCommon "github.com/ethereum/go-ethereum/common"
 	gethTypes "github.com/ethereum/go-ethereum/core/types"
 )
@@ -149,12 +149,11 @@ func TestTxBroadcaster_ProcessUnstartedTxs_Success(t *testing.T) {
 		_, err = attempt.GetSignedTx()
 		require.NoError(t, err)
 		assert.Equal(t, models.TxAttemptStateBroadcast, attempt.State)
-		require.Len(t, attempt.ReceiptIDs, 0)
+		require.Len(t, attempt.TxReceiptIDs, 0)
 
 		ethClient.AssertExpectations(t)
 	})
 
-	// TODO: Add multiple tx test
 	t.Run("sends 3 txs", func(t *testing.T) {
 		firstTx := &models.Tx{
 			ID:             uuid.New(),
@@ -244,7 +243,7 @@ func TestTxBroadcaster_ProcessUnstartedTxs_Success(t *testing.T) {
 		_, err = attempt.GetSignedTx()
 		require.NoError(t, err)
 		assert.Equal(t, models.TxAttemptStateBroadcast, attempt.State)
-		require.Len(t, attempt.ReceiptIDs, 0)
+		require.Len(t, attempt.TxReceiptIDs, 0)
 
 		// Check secondTx and it's attempt, nonce should be 1
 		secondTx, err = store.GetTx(secondTx.ID)
@@ -265,7 +264,7 @@ func TestTxBroadcaster_ProcessUnstartedTxs_Success(t *testing.T) {
 		_, err = attempt.GetSignedTx()
 		require.NoError(t, err)
 		assert.Equal(t, models.TxAttemptStateBroadcast, attempt.State)
-		require.Len(t, attempt.ReceiptIDs, 0)
+		require.Len(t, attempt.TxReceiptIDs, 0)
 
 		// Check thirdTx and it's attempt, nonce should be 2
 		thirdTx, err = store.GetTx(thirdTx.ID)
@@ -286,7 +285,7 @@ func TestTxBroadcaster_ProcessUnstartedTxs_Success(t *testing.T) {
 		_, err = attempt.GetSignedTx()
 		require.NoError(t, err)
 		assert.Equal(t, models.TxAttemptStateBroadcast, attempt.State)
-		require.Len(t, attempt.ReceiptIDs, 0)
+		require.Len(t, attempt.TxReceiptIDs, 0)
 
 		ethClient.AssertExpectations(t)
 	})
@@ -399,8 +398,6 @@ func TestTxBroadcaster_AssignsNonceOnFirstRun(t *testing.T) {
 
 func TestTxBroadcaster_ProcessUnstartedTxs_ResumingFromCrash(t *testing.T) {
 	nextNonce := int64(916714082576372851)
-
-	// TODO: Add test to make sure not more than one in_progress tx
 
 	t.Run("previous run assigned nonce but never broadcast", func(t *testing.T) {
 		store := esTesting.NewStore(t)
@@ -681,9 +678,6 @@ func TestTxBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 	t.Run("geth client returns an error in the fatal errors category", func(t *testing.T) {
 		fatalErrorExample := "exceeds block gas limit"
 		localNextNonce := getLocalNextNonce(t, store, fromAddress)
-		// BEGIN DEBUG
-		log.Println("localNextNonce for", fromAddress, localNextNonce)
-		// END DEBUG
 
 		tx := &models.Tx{
 			ID:             uuid.New(),
@@ -765,9 +759,6 @@ func TestTxBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 		assert.Equal(t, models.TxStateInProgress, tx.State)
 		assert.Len(t, tx.TxAttemptIDs, 1)
 		attempt, err := store.GetTxAttempt(tx.TxAttemptIDs[0])
-		// BEGIN DEBUG
-		log.Println("Trying to GetTxAttempt attemptID", tx.TxAttemptIDs[0])
-		// END DEBUG
 		require.NoError(t, err)
 		assert.Equal(t, models.TxAttemptStateInProgress, attempt.State)
 
@@ -966,4 +957,120 @@ func TestTxBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 	})
 }
 
-// TODO: Add tests
+func TestTxBroadcaster_ProcessUnstartedTxs_KeystoreErrors(t *testing.T) {
+	toAddress := gethCommon.HexToAddress("0x6C03DDA95a2AEd917EeCc6eddD4b9D16E6380411")
+	value := big.NewInt(142)
+	gasLimit := uint64(242)
+	encodedPayload := []byte{0, 1}
+	localNonce := 0
+
+	store := esTesting.NewStore(t)
+	keyStore := new(mocks.KeyStoreInterface)
+	account := esTesting.MustInsertRandomAccount(t, store, 0)
+	fromAddress := account.Address
+	config := esTesting.NewConfig(t)
+	ethClient := new(mocks.Client)
+
+	tb := txmanager.NewTxBroadcaster(ethClient, store, keyStore, config)
+
+	t.Run("keystore does not have the unlocked key", func(t *testing.T) {
+		tx := &models.Tx{
+			ID:             uuid.New(),
+			Nonce:          -1,
+			FromAddress:    fromAddress,
+			ToAddress:      toAddress,
+			EncodedPayload: encodedPayload,
+			Value:          value,
+			GasLimit:       gasLimit,
+			State:          models.TxStateUnstarted,
+		}
+		require.NoError(t, store.PutTx(tx))
+		account.PendingTxIDs = append(account.PendingTxIDs, tx.ID)
+		require.NoError(t, store.PutAccount(account))
+
+		keyStore.On("GetAccountByAddress", fromAddress).Return(gethAccounts.Account{}, errors.New("authentication needed: password or unlock")).Once()
+
+		// Do the thing
+		err := tb.ProcessUnstartedTxs(account)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "authentication needed: password or unlock")
+
+		// Check that the transaction is left in unstarted state
+		tx, err = store.GetTx(tx.ID)
+		require.NoError(t, err)
+
+		assert.Equal(t, models.TxStateUnstarted, tx.State)
+		assert.Len(t, tx.TxAttemptIDs, 0)
+
+		// Check that the key did not have its nonce incremented
+		account, err = store.GetAccount(fromAddress)
+		require.NoError(t, err)
+		require.Equal(t, int64(localNonce), account.NextNonce)
+
+		keyStore.AssertExpectations(t)
+	})
+
+	t.Run("tx signing fails", func(t *testing.T) {
+		tx := &models.Tx{
+			ID:             uuid.New(),
+			Nonce:          -1,
+			FromAddress:    fromAddress,
+			ToAddress:      toAddress,
+			EncodedPayload: encodedPayload,
+			Value:          value,
+			GasLimit:       gasLimit,
+			State:          models.TxStateUnstarted,
+		}
+		require.NoError(t, store.PutTx(tx))
+		account.PendingTxIDs = append(account.PendingTxIDs, tx.ID)
+		require.NoError(t, store.PutAccount(account))
+
+		signingAccount := gethAccounts.Account{Address: fromAddress}
+		keyStore.On("GetAccountByAddress", fromAddress).Return(signingAccount, nil).Once()
+
+		gethTx := gethTypes.Transaction{}
+		keyStore.On("SignTx",
+			mock.AnythingOfType("accounts.Account"),
+			mock.AnythingOfType("*types.Transaction"),
+			mock.MatchedBy(func(chainID *big.Int) bool {
+				return chainID.Cmp(config.ChainID) == 0
+			})).Return(&gethTx, errors.New("could not sign transaction")).Once()
+
+		// Do the thing
+		err := tb.ProcessUnstartedTxs(account)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "could not sign transaction")
+
+		// Check that the transaction is left in unstarted state
+		tx, err = store.GetTx(tx.ID)
+		require.NoError(t, err)
+
+		assert.Equal(t, models.TxStateUnstarted, tx.State)
+		assert.Len(t, tx.TxAttemptIDs, 0)
+
+		// Check that the key did not have its nonce incremented
+		account, err = store.GetAccount(fromAddress)
+		require.NoError(t, err)
+		require.Equal(t, int64(localNonce), account.NextNonce)
+
+		keyStore.AssertExpectations(t)
+	})
+
+	// Should have done nothing
+	ethClient.AssertExpectations(t)
+}
+
+func TestTxBroadcaster_Trigger(t *testing.T) {
+	t.Parallel()
+
+	// Simple sanity check to make sure it doesn't block
+	store := esTesting.NewStore(t)
+	config := esTesting.NewConfig(t)
+	ethClient := new(mocks.Client)
+	keyStore := new(mocks.KeyStoreInterface)
+	tb := txmanager.NewTxBroadcaster(ethClient, store, keyStore, config)
+
+	tb.Trigger()
+	tb.Trigger()
+	tb.Trigger()
+}

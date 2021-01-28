@@ -104,9 +104,8 @@ func MustInsertUnconfirmedTxWithBroadcastAttempt(t *testing.T, store esStore.Sto
 	attempt.SignedRawTx = rlp.Bytes()
 	attempt.State = models.TxAttemptStateBroadcast
 	require.NoError(t, store.PutTxAttempt(attempt))
+	require.NoError(t, store.AddAttemptToTx(tx, attempt))
 
-	tx.TxAttemptIDs = append(tx.TxAttemptIDs, attempt.ID)
-	require.NoError(t, store.PutTx(tx))
 	account, err := store.GetAccount(tx.FromAddress)
 	require.NoError(t, err)
 	account.PendingTxIDs = append(account.PendingTxIDs, tx.ID)
@@ -114,7 +113,7 @@ func MustInsertUnconfirmedTxWithBroadcastAttempt(t *testing.T, store esStore.Sto
 	return tx
 }
 
-func mustInsertConfirmedTxWithAttempt(t *testing.T, store esStore.Store, nonce int64, broadcastBeforeBlockNum int64, fromAddress common.Address) *models.Tx {
+func MustInsertConfirmedTxWithAttempt(t *testing.T, store esStore.Store, nonce int64, broadcastBeforeBlockNum int64, fromAddress common.Address) *models.Tx {
 	t.Helper()
 
 	tx := NewTx(t, fromAddress)
@@ -125,9 +124,8 @@ func mustInsertConfirmedTxWithAttempt(t *testing.T, store esStore.Store, nonce i
 	attempt.BroadcastBeforeBlockNum = broadcastBeforeBlockNum
 	attempt.State = models.TxAttemptStateBroadcast
 	require.NoError(t, store.PutTxAttempt(attempt))
+	require.NoError(t, store.AddAttemptToTx(tx, attempt))
 
-	tx.TxAttemptIDs = append(tx.TxAttemptIDs, attempt.ID)
-	require.NoError(t, store.PutTx(tx))
 	account, err := store.GetAccount(tx.FromAddress)
 	require.NoError(t, err)
 	account.PendingTxIDs = append(account.PendingTxIDs, tx.ID)
@@ -149,9 +147,8 @@ func MustInsertInProgressTxWithAttempt(t *testing.T, store esStore.Store, nonce 
 	attempt.SignedRawTx = rlp.Bytes()
 	attempt.State = models.TxAttemptStateInProgress
 	require.NoError(t, store.PutTxAttempt(attempt))
+	require.NoError(t, store.AddAttemptToTx(tx, attempt))
 
-	tx.TxAttemptIDs = append(tx.TxAttemptIDs, attempt.ID)
-	require.NoError(t, store.PutTx(tx))
 	account, err := store.GetAccount(tx.FromAddress)
 	require.NoError(t, err)
 	account.PendingTxIDs = append(account.PendingTxIDs, tx.ID)
@@ -169,9 +166,40 @@ func NewTxAttempt(t *testing.T, txID uuid.UUID) *models.TxAttempt {
 		GasPrice: gasPrice,
 		// Just a random signed raw tx that decodes correctly
 		// Ignore all actual values
-		SignedRawTx: hexutil.MustDecode("0xf889808504a817c8008307a12094000000000000000000000000000000000000000080a400000000000000000000000000000000000000000000000000000000000000000000000025a0838fe165906e2547b9a052c099df08ec891813fea4fcdb3c555362285eb399c5a070db99322490eb8a0f2270be6eca6e3aedbc49ff57ef939cf2774f12d08aa85e"),
-		Hash:        NewHash(),
+		SignedRawTx:             hexutil.MustDecode("0xf889808504a817c8008307a12094000000000000000000000000000000000000000080a400000000000000000000000000000000000000000000000000000000000000000000000025a0838fe165906e2547b9a052c099df08ec891813fea4fcdb3c555362285eb399c5a070db99322490eb8a0f2270be6eca6e3aedbc49ff57ef939cf2774f12d08aa85e"),
+		Hash:                    NewHash(),
+		BroadcastBeforeBlockNum: -1,
 	}
+}
+
+func MustAddAttemptToTx(t *testing.T, store esStore.Store, txID uuid.UUID, attempt *models.TxAttempt) {
+	t.Helper()
+
+	tx, err := store.GetTx(txID)
+	require.NoError(t, err)
+	require.NoError(t, store.AddAttemptToTx(tx, attempt))
+}
+
+func MustInsertTxReceipt(
+	t *testing.T,
+	store esStore.Store,
+	blockNumber int64,
+	blockHash common.Hash,
+	txHash common.Hash,
+	attempt *models.TxAttempt,
+) *models.TxReceipt {
+	receipt := &models.TxReceipt{
+		ID:               uuid.New(),
+		BlockNumber:      blockNumber,
+		BlockHash:        blockHash,
+		TxHash:           txHash,
+		TransactionIndex: uint(NewRandomInt64()),
+		Receipt:          []byte(`{"foo":42}`),
+	}
+	require.NoError(t, store.PutTxReceipt(receipt))
+	attempt.TxReceiptIDs = append(attempt.TxReceiptIDs, receipt.ID)
+	require.NoError(t, store.PutTxAttempt(attempt))
+	return receipt
 }
 
 func MustInsertFatalErrorTx(t *testing.T, store esStore.Store, fromAddress common.Address) *models.Tx {

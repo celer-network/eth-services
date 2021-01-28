@@ -6,7 +6,7 @@ import (
 	"sync"
 
 	esStore "github.com/celer-network/eth-services/store"
-	esStoreModels "github.com/celer-network/eth-services/store/models"
+	"github.com/celer-network/eth-services/store/models"
 	esTypes "github.com/celer-network/eth-services/types"
 	gethTypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/google/uuid"
@@ -30,7 +30,7 @@ func newJobMonitor(store esStore.Store, config *esTypes.Config) *jobMonitor {
 	}
 }
 
-func (m *jobMonitor) Connect(*esStoreModels.Head) error {
+func (m *jobMonitor) Connect(*models.Head) error {
 	return nil
 }
 
@@ -38,7 +38,7 @@ func (m *jobMonitor) Disconnect() {
 	// pass
 }
 
-func (m *jobMonitor) OnNewLongestChain(ctx context.Context, head esStoreModels.Head) {
+func (m *jobMonitor) OnNewLongestChain(ctx context.Context, head models.Head) {
 	m.lock.Lock()
 	for jobID, handler := range m.jobs {
 		currJobID := jobID
@@ -50,15 +50,12 @@ func (m *jobMonitor) OnNewLongestChain(ctx context.Context, head esStoreModels.H
 	m.lock.Unlock()
 }
 
-func (m *jobMonitor) handleJob(head esStoreModels.Head, jobID uuid.UUID, handler JobHandler) {
+func (m *jobMonitor) handleJob(head models.Head, jobID uuid.UUID, handler JobHandler) {
 	blockNumber := head.Number
 	if blockNumber == -1 {
 		return
 	}
 	threshold := blockNumber - m.config.FinalityDepth
-	// BEGIN DEBUG
-	m.config.Logger.Debugw("handleJob", "blockNumber", blockNumber, "threshold", threshold)
-	// END DEBUG
 	if threshold < 0 {
 		return
 	}
@@ -80,32 +77,36 @@ func (m *jobMonitor) handleJob(head esStoreModels.Head, jobID uuid.UUID, handler
 		m.deleteMonitor(jobID)
 		return
 	}
-	// BEGIN DEBUG
-	m.config.Logger.Debugw("confirmed status", "confirmed", confirmed)
-	// END DEBUG
 	if confirmed {
-		attempt, getAttemptErr := m.store.GetTxAttempt(tx.TxAttemptIDs[len(tx.TxAttemptIDs)-1])
-		if getAttemptErr != nil {
-			m.config.Logger.Error(getAttemptErr)
+		for _, attemptID := range tx.TxAttemptIDs {
+			attempt, getAttemptErr := m.store.GetTxAttempt(attemptID)
+			if getAttemptErr != nil {
+				m.config.Logger.Error(getAttemptErr)
+				m.deleteMonitor(jobID)
+				return
+			}
+			if attempt.State != models.TxAttemptStateBroadcast || len(attempt.TxReceiptIDs) == 0 {
+				continue
+			}
+			// TODO: Check if looping necessary
+			receiptID := attempt.TxReceiptIDs[len(attempt.TxReceiptIDs)-1]
+			receipt, getReceiptErr := m.store.GetTxReceipt(receiptID)
+			if getReceiptErr != nil {
+				m.config.Logger.Error(err)
+				m.deleteMonitor(jobID)
+				return
+			}
+			var ethReceipt gethTypes.Receipt
+			marshalErr := json.Unmarshal(receipt.Receipt, &ethReceipt)
+			if marshalErr != nil {
+				m.config.Logger.Error(marshalErr)
+				m.deleteMonitor(jobID)
+				return
+			}
+			handler(jobID, &ethReceipt)
 			m.deleteMonitor(jobID)
 			return
 		}
-		receipt, getReceiptErr := m.store.GetTxReceipt(attempt.ReceiptIDs[len(attempt.ReceiptIDs)-1])
-		if getReceiptErr != nil {
-			m.config.Logger.Error(getReceiptErr)
-			m.deleteMonitor(jobID)
-			return
-		}
-		var ethReceipt gethTypes.Receipt
-		marshalErr := json.Unmarshal(receipt.Receipt, &ethReceipt)
-		if marshalErr != nil {
-			m.config.Logger.Error(marshalErr)
-			m.deleteMonitor(jobID)
-			return
-		}
-		handler(jobID, &ethReceipt)
-		m.deleteMonitor(jobID)
-		return
 	}
 }
 

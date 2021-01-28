@@ -29,22 +29,22 @@ func NewConfig(t testing.TB) *types.Config {
 
 	logger, err := zap.NewDevelopment()
 	require.NoError(t, err)
-	defaultGasPrice := big.NewInt(20000000000) // 20 gwei
 	return &types.Config{
 		Logger:                   esLogger.NewZapLogger(logger.Sugar()),
 		BlockTime:                time.Second,
 		RPCURL:                   nil,
 		SecondaryRPCURLs:         nil,
 		ChainID:                  big.NewInt(883),
-		HeadTrackerHistoryDepth:  12,
-		HeadTrackerMaxBufferSize: 100,
-		FinalityDepth:            12,
-
-		KeysDir:         "/tmp/eth-service-test/keys",
-		DefaultGasPrice: defaultGasPrice,
-		MaxGasPrice:     new(big.Int).Mul(defaultGasPrice, big.NewInt(10)),
-		GasBumpWei:      big.NewInt(5000000000),
-		GasBumpPercent:  11,
+		HeadTrackerHistoryDepth:  100,
+		HeadTrackerMaxBufferSize: 3,
+		FinalityDepth:            50,
+		KeysDir:                  "/tmp/eth-service-test/keys",
+		DefaultGasPrice:          big.NewInt(20000000000),
+		MaxGasPrice:              big.NewInt(1500000000000),
+		GasBumpWei:               big.NewInt(5000000000),
+		GasBumpPercent:           20,
+		GasBumpThreshold:         3,
+		GasBumpTxDepth:           10,
 	}
 }
 

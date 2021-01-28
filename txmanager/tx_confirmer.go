@@ -31,6 +31,12 @@ var (
 
 type TxConfirmer interface {
 	subscription.HeadTrackable
+
+	// Methods for testing
+	CheckForReceipts(ctx context.Context, blockNum int64) error
+	BumpGasWhereNecessary(ctx context.Context, accounts []*models.Account, blockHeight int64) error
+	EnsureConfirmedTxsInLongestChain(ctx context.Context, accounts []*models.Account, head *models.Head) error
+	SetKeyStore(keyStore client.KeyStoreInterface)
 }
 
 // TxConfirmer is a broad service which performs four different tasks in sequence on every new longest chain
@@ -141,7 +147,7 @@ const receiptFetcherWorkerCount = 10
 func (tc *txConfirmer) CheckForReceipts(ctx context.Context, blockNum int64) error {
 	txs, err := tc.store.GetTxsRequiringReceiptFetch()
 	if err != nil {
-		return errors.Wrap(err, "getTxsRequiringReceiptFetch failed")
+		return errors.Wrap(err, "GetTxsRequiringReceiptFetch failed")
 	}
 	if len(txs) == 0 {
 		return nil
@@ -160,6 +166,10 @@ func (tc *txConfirmer) CheckForReceipts(ctx context.Context, blockNum int64) err
 	}
 
 	return nil
+}
+
+func (tc *txConfirmer) SetKeyStore(keyStore client.KeyStoreInterface) {
+	tc.keyStore = keyStore
 }
 
 func (tc *txConfirmer) concurrentlyFetchReceipts(ctx context.Context, txs []*models.Tx) {
@@ -184,6 +194,7 @@ func (tc *txConfirmer) fetchReceipts(ctx context.Context, chTxs <-chan *models.T
 		if !ok {
 			return
 		}
+		// Iterate from the attempt with the highest gas price
 		for _, attemptID := range tx.TxAttemptIDs {
 			attempt, err := tc.store.GetTxAttempt(attemptID)
 			if err != nil {
@@ -218,29 +229,15 @@ func (tc *txConfirmer) fetchReceipts(ctx context.Context, chTxs <-chan *models.T
 					tc.logger.Errorf("TxConfirmer#fetchReceipts: invariant violation, expected receipt with hash %s to have same hash as attempt with hash %s", receipt.TxHash.Hex(), attempt.Hash.Hex())
 					break
 				}
-				serializedReceipt, err := serializeReceipt(receipt)
+				txReceipt, err := buildTxReceipt(receipt)
 				if err != nil {
-					tc.logger.Errorw("TxConfirmer#fetchReceipts: serializeReceipt failed",
+					tc.logger.Errorw("TxConfirmer#fetchReceipts: buildTxReceipt failed",
 						"err", err,
 					)
 				}
-				err = tc.store.PutTxReceipt(serializedReceipt)
+				err = tc.saveReceipt(tx, attempt, txReceipt)
 				if err != nil {
-					tc.logger.Errorw("TxConfirmer#fetchReceipts: PutReceipt failed",
-						"err", err,
-					)
-				}
-				attempt.ReceiptIDs = append(attempt.ReceiptIDs, serializedReceipt.ID)
-				err = tc.store.PutTxAttempt(attempt)
-				if err != nil {
-					tc.logger.Errorw("TxConfirmer#fetchReceipts: PutTxAttempt failed",
-						"err", err,
-					)
-				}
-				tx.State = models.TxStateConfirmed
-				err = tc.store.PutTx(tx)
-				if err != nil {
-					tc.logger.Errorw("TxConfirmer#fetchReceipts: PutTx failed",
+					tc.logger.Errorw("TxConfirmer#fetchReceipts: saveReceipt failed",
 						"err", err,
 					)
 				}
@@ -266,7 +263,7 @@ func (tc *txConfirmer) fetchReceipt(ctx context.Context, hash gethCommon.Hash) (
 	return receipt, err
 }
 
-func serializeReceipt(receipt *gethTypes.Receipt) (*models.TxReceipt, error) {
+func buildTxReceipt(receipt *gethTypes.Receipt) (*models.TxReceipt, error) {
 	if receipt.BlockNumber == nil {
 		return nil, errors.Errorf("receipt was missing block number: %#v", receipt)
 	}
@@ -274,7 +271,7 @@ func serializeReceipt(receipt *gethTypes.Receipt) (*models.TxReceipt, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "serializeReceipt failed to marshal")
 	}
-	serializedReceipt := models.TxReceipt{
+	txReceipt := models.TxReceipt{
 		ID:               uuid.New(),
 		Receipt:          receiptJSON,
 		TxHash:           receipt.TxHash,
@@ -282,7 +279,44 @@ func serializeReceipt(receipt *gethTypes.Receipt) (*models.TxReceipt, error) {
 		BlockNumber:      receipt.BlockNumber.Int64(),
 		TransactionIndex: receipt.TransactionIndex,
 	}
-	return &serializedReceipt, nil
+	return &txReceipt, nil
+}
+
+func (tc *txConfirmer) saveReceipt(
+	tx *models.Tx,
+	attempt *models.TxAttempt,
+	receipt *models.TxReceipt,
+) error {
+	insert := true
+	for _, receiptID := range attempt.TxReceiptIDs {
+		currReceipt, getReceiptErr := tc.store.GetTxReceipt(receiptID)
+		if getReceiptErr != nil {
+			return getReceiptErr
+		}
+		if bytes.Equal(currReceipt.BlockHash[:], receipt.BlockHash[:]) &&
+			bytes.Equal(currReceipt.TxHash[:], receipt.TxHash[:]) {
+			// Conflict here shouldn't be possible because there should only ever
+			// be one receipt for a Tx, and if it exists then the transaction
+			// is marked confirmed which means we can never get here.
+			// However, even so, it still shouldn't be an error to re-insert a receipt we already have.
+			insert = false
+			break
+		}
+	}
+
+	if insert {
+		putReceiptErr := tc.store.PutTxReceipt(receipt)
+		if putReceiptErr != nil {
+			return putReceiptErr
+		}
+		attempt.TxReceiptIDs = append(attempt.TxReceiptIDs, receipt.ID)
+		putAttemptErr := tc.store.PutTxAttempt(attempt)
+		if putAttemptErr != nil {
+			return putAttemptErr
+		}
+	}
+	tx.State = models.TxStateConfirmed
+	return tc.store.PutTx(tx)
 }
 
 func (tc *txConfirmer) markOldTxsMissingReceiptAsErrored(ctx context.Context, blockNum int64) error {
@@ -378,7 +412,8 @@ func (tc *txConfirmer) newAttemptWithGasBump(tx *models.Tx) (attempt *models.TxA
 	var bumpedGasPrice *big.Int
 	numAttempts := len(tx.TxAttemptIDs)
 	if numAttempts > 0 {
-		previousAttempt, getPreviousAttemptErr := tc.store.GetTxAttempt(tx.TxAttemptIDs[numAttempts-1])
+		// Get attempt with highest gas price
+		previousAttempt, getPreviousAttemptErr := tc.store.GetTxAttempt(tx.TxAttemptIDs[0])
 		if getPreviousAttemptErr != nil {
 			return nil, errors.Wrap(getPreviousAttemptErr, errStr)
 		}
@@ -394,7 +429,7 @@ func (tc *txConfirmer) newAttemptWithGasBump(tx *models.Tx) (attempt *models.TxA
 			tc.logger.Errorw("Failed to bump gas",
 				"err", err,
 				"txID", tx.ID,
-				"txHash", attempt.Hash,
+				"txHash", previousAttempt.Hash,
 				"originalGasPrice", previousGasPrice.String(),
 				"maxGasPrice", tc.config.MaxGasPrice,
 			)
@@ -417,7 +452,15 @@ func (tc *txConfirmer) saveInProgressAttempt(tx *models.Tx, attempt *models.TxAt
 	if attempt.State != models.TxAttemptStateInProgress {
 		return errors.Wrap(errors.New("expect attempt state to be in_progress"), errStr)
 	}
-	return errors.Wrap(tc.store.PutTxAttempt(attempt), errStr)
+	err := tc.store.PutTxAttempt(attempt)
+	if err != nil {
+		return errors.Wrap(err, errStr)
+	}
+	err = tc.store.AddAttemptToTx(tx, attempt)
+	if err != nil {
+		return errors.Wrap(err, errStr)
+	}
+	return nil
 }
 
 func (tc *txConfirmer) handleInProgressAttempt(ctx context.Context, tx *models.Tx, attempt *models.TxAttempt, blockHeight int64) error {
@@ -425,9 +468,6 @@ func (tc *txConfirmer) handleInProgressAttempt(ctx context.Context, tx *models.T
 		return errors.Errorf("invariant violation: expected TxAttempt %v to be in_progress, it was %s", attempt.ID, attempt.State)
 	}
 
-	// BEGIN DEBUG
-	tc.logger.Debugw("handleInProgressAttempt#sendingTx", "tx", tx.ID, "attempt", attempt.ID)
-	// END DEBUG
 	sendError := sendTx(ctx, tc.ethClient, attempt, tc.logger)
 
 	if sendError.IsTerminallyUnderpriced() {
@@ -545,9 +585,6 @@ func (tc *txConfirmer) saveBroadcastAttempt(tx *models.Tx, attempt *models.TxAtt
 	if attempt.State != models.TxAttemptStateInProgress {
 		return errors.Wrap(errors.New("expected attempt state to be in_progress"), errStr)
 	}
-	// BEGIN DEBUG
-	tc.logger.Debug("saveBroadcastAttempt called")
-	// END DEBUG
 	attempt.State = models.TxAttemptStateBroadcast
 	return errors.Wrap(tc.store.PutTxAttempt(attempt), errStr)
 }
@@ -581,7 +618,7 @@ func (tc *txConfirmer) deleteAttempt(tx *models.Tx, attempt *models.TxAttempt) e
 		return errors.Wrap(putTxErr, errStr)
 	}
 	// Remove receipts if any
-	for _, receiptID := range attempt.ReceiptIDs {
+	for _, receiptID := range attempt.TxReceiptIDs {
 		deleteReceiptErr := tc.store.DeleteTxReceipt(receiptID)
 		if deleteReceiptErr != nil {
 			return errors.Wrap(deleteReceiptErr, errStr)
@@ -652,7 +689,7 @@ func (tc *txConfirmer) hasReceiptInLongestChain(tx *models.Tx, head *models.Head
 			if getAttemptErr != nil {
 				return false, getAttemptErr
 			}
-			for _, receiptID := range attempt.ReceiptIDs {
+			for _, receiptID := range attempt.TxReceiptIDs {
 				receipt, getReceiptErr := tc.store.GetTxReceipt(receiptID)
 				if getReceiptErr != nil {
 					return false, getReceiptErr
@@ -676,7 +713,7 @@ func (tc *txConfirmer) markForRebroadcast(tx *models.Tx) error {
 	}
 
 	// Rebroadcast the one with the highest gas price
-	attemptID := tx.TxAttemptIDs[numAttempts-1]
+	attemptID := tx.TxAttemptIDs[0]
 	attempt, err := tc.store.GetTxAttempt(attemptID)
 	if err != nil {
 		return err
@@ -704,13 +741,13 @@ func (tc *txConfirmer) deleteAllReceipts(tx *models.Tx) error {
 		if getAttemptErr != nil {
 			return getAttemptErr
 		}
-		for _, receiptID := range attempt.ReceiptIDs {
+		for _, receiptID := range attempt.TxReceiptIDs {
 			deleteErr := tc.store.DeleteTxReceipt(receiptID)
 			if deleteErr != nil {
 				return deleteErr
 			}
 		}
-		attempt.ReceiptIDs = make([]uuid.UUID, 0)
+		attempt.TxReceiptIDs = make([]uuid.UUID, 0)
 		putAttemptErr := tc.store.PutTxAttempt(attempt)
 		if putAttemptErr != nil {
 			return putAttemptErr

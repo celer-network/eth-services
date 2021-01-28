@@ -62,7 +62,7 @@ type txBroadcaster struct {
 	chStop  chan struct{}
 	wg      sync.WaitGroup
 
-	lock sync.Mutex
+	locks *accountMutexMap
 
 	StartStopOnce
 }
@@ -84,22 +84,27 @@ func NewTxBroadcaster(
 		trigger:   make(chan struct{}, 1),
 		chStop:    make(chan struct{}),
 		wg:        sync.WaitGroup{},
+		locks:     newAccountMutexMap(),
 	}
 }
 
 func (tb *txBroadcaster) RegisterAccount(address gethCommon.Address) error {
-	account, err := tb.keyStore.GetAccountByAddress(address)
+	_, err := tb.keyStore.GetAccountByAddress(address)
 	if err != nil {
 		return err
 	}
 	storedAccount := &models.Account{
-		Address:        account.Address,
+		Address:        address,
 		NextNonce:      -1,
 		PendingTxIDs:   make([]uuid.UUID, 0),
 		CompletedTxIDs: make([]uuid.UUID, 0),
 		ErroredTxIDs:   make([]uuid.UUID, 0),
 	}
-	return tb.store.PutAccount(storedAccount)
+	err = tb.store.PutAccount(storedAccount)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (tb *txBroadcaster) AddTx(
@@ -194,8 +199,13 @@ func (tb *txBroadcaster) monitorTxs() {
 }
 
 func (tb *txBroadcaster) ProcessUnstartedTxs(account *models.Account) error {
-	tb.lock.Lock()
-	defer tb.lock.Unlock()
+	lock, exists := tb.locks.Load(account.Address)
+	if !exists {
+		lock = &sync.Mutex{}
+		tb.locks.Store(account.Address, lock)
+	}
+	lock.Lock()
+	defer lock.Unlock()
 	return tb.processUnstartedTxs(account.Address)
 }
 
@@ -213,7 +223,7 @@ func (tb *txBroadcaster) processUnstartedTxs(fromAddress gethCommon.Address) err
 				"address", fromAddress,
 				"time", time.Since(mark),
 				"n", n,
-				"id", "eth_broadcaster",
+				"id", "TxBroadcaster",
 			)
 		}
 	}()
@@ -254,9 +264,6 @@ func (tb *txBroadcaster) handleAnyInProgressTx(fromAddress gethCommon.Address) e
 		return errors.Wrap(err, errStr)
 	}
 	if tx != nil {
-		// BEGIN DEBUG
-		tb.logger.Debug("handle in_progress tx")
-		// END DEBUG
 		attempt, getAttemptErr := tb.store.GetTxAttempt(tx.TxAttemptIDs[0])
 		if getAttemptErr != nil {
 			return errors.Wrap(getAttemptErr, errStr)
@@ -277,9 +284,6 @@ func (tb *txBroadcaster) getInProgressTx(fromAddress gethCommon.Address) (*model
 	tx, err := tb.store.GetOneInProgressTx(fromAddress)
 	if err != nil {
 		if err == store.ErrNotFound {
-			// BEGIN DEBUG
-			tb.logger.Debug("no in_progress tx")
-			// END DEBUG
 			return nil, nil
 		}
 		return nil, errors.Wrap(err, errStr)
@@ -294,7 +298,6 @@ func (tb *txBroadcaster) getInProgressTx(fromAddress gethCommon.Address) (*model
 		return nil, errors.Wrap(err, errStr)
 	}
 	if attempt.State != models.TxAttemptStateInProgress {
-		tb.logger.Error("HERE ", attempt.State)
 		return nil, errors.Wrap(errInconsistent, errStr)
 	}
 	return tx, nil
@@ -309,9 +312,6 @@ func (tb *txBroadcaster) handleInProgressTx(tx *models.Tx, attempt *models.TxAtt
 
 	ctx, cancel := context.WithTimeout(context.Background(), maxEthNodeRequestTime)
 	defer cancel()
-	// BEGIN DEBUG
-	tb.logger.Debugw("handleInProgressTx#sendingTx", "tx", tx.ID, "attempt", attempt.ID)
-	// END DEBUG
 	sendError := sendTx(ctx, tb.ethClient, attempt, tb.logger)
 
 	if sendError.Fatal() {
@@ -398,9 +398,6 @@ func (tb *txBroadcaster) assignNonceToNextUnstartedTx(fromAddress gethCommon.Add
 	if err != nil {
 		return nil, errors.Wrap(err, errStr)
 	}
-	// BEGIN DEBUG
-	tb.logger.Debugw("assigning nonce", "nonce", nonce)
-	// END DEBUG
 	tx.Nonce = nonce
 	return tx, nil
 }
@@ -418,9 +415,10 @@ func (tb *txBroadcaster) saveInProgressTxWithAttempt(tx *models.Tx, attempt *mod
 		return errors.Wrap(err, errStr)
 	}
 	tx.State = models.TxStateInProgress
-	attemptIDs := tx.TxAttemptIDs
-	attemptIDs = append(attemptIDs, attempt.ID)
-	tx.TxAttemptIDs = attemptIDs
+	err = tb.store.AddAttemptToTx(tx, attempt)
+	if err != nil {
+		return errors.Wrap(err, errStr)
+	}
 	err = tb.store.PutTx(tx)
 	if err != nil {
 		return errors.Wrap(err, errStr)
@@ -429,15 +427,11 @@ func (tb *txBroadcaster) saveInProgressTxWithAttempt(tx *models.Tx, attempt *mod
 }
 
 // Finds the next saved transaction that has yet to be broadcast from the given address
-// TODO: Ordering
 func (tb *txBroadcaster) getNextUnstartedTx(fromAddress gethCommon.Address) (*models.Tx, error) {
 	return tb.store.GetNextUnstartedTx(fromAddress)
 }
 
 func (tb *txBroadcaster) saveUnconfirmed(tx *models.Tx, attempt *models.TxAttempt) error {
-	// BEGIN DEBUG
-	tb.logger.Debug("saveUnconfirmed called")
-	// END DEBUG
 	errStr := "saveUnconfirmed failed"
 	if tx.State != models.TxStateInProgress {
 		return errors.Wrap(errors.Errorf("can only transition to unconfirmed from in_progress, tx is currently %s", tx.State), errStr)
@@ -449,9 +443,6 @@ func (tb *txBroadcaster) saveUnconfirmed(tx *models.Tx, attempt *models.TxAttemp
 	tx.State = models.TxStateUnconfirmed
 	// Update state
 	attempt.State = models.TxAttemptStateBroadcast
-	// BEGIN DEBUG
-	tb.logger.Debugw("saveUnConfirmed#PutTxAttempt", "attemptID", attempt.ID)
-	// END DEBUG
 	err := tb.store.PutTxAttempt(attempt)
 	if err != nil {
 		return errors.Wrap(err, errStr)
@@ -520,9 +511,6 @@ func (tb *txBroadcaster) saveFatallyErroredTx(tx *models.Tx) error {
 // It loads it from the database, or if this is a brand new key, queries the eth node for the latest nonce
 func (tb *txBroadcaster) getNextNonceWithInitialLoad(address gethCommon.Address) (int64, error) {
 	nonce, err := tb.store.GetNextNonce(address)
-	// BEGIN DEBUG
-	tb.logger.Debugw("getNextNonceWithInitialLoad", "address", address, "nonce", nonce)
-	// END DEBUG
 	if err != nil {
 		return 0, err
 	}
@@ -571,4 +559,34 @@ func (tb *txBroadcaster) loadInitialNonceFromEthClient(account gethCommon.Addres
 	defer cancel()
 	nextNonce, err = tb.ethClient.PendingNonceAt(ctx, account)
 	return nextNonce, errors.WithStack(err)
+}
+
+type accountMutexMap struct {
+	sync.RWMutex
+	internal map[gethCommon.Address]*sync.Mutex
+}
+
+func newAccountMutexMap() *accountMutexMap {
+	return &accountMutexMap{
+		internal: make(map[gethCommon.Address]*sync.Mutex),
+	}
+}
+
+func (rm *accountMutexMap) Load(key gethCommon.Address) (value *sync.Mutex, ok bool) {
+	rm.RLock()
+	result, ok := rm.internal[key]
+	rm.RUnlock()
+	return result, ok
+}
+
+func (rm *accountMutexMap) Delete(key gethCommon.Address) {
+	rm.Lock()
+	delete(rm.internal, key)
+	rm.Unlock()
+}
+
+func (rm *accountMutexMap) Store(key gethCommon.Address, value *sync.Mutex) {
+	rm.Lock()
+	rm.internal[key] = value
+	rm.Unlock()
 }

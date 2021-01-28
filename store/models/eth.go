@@ -87,7 +87,7 @@ type TxAttempt struct {
 	Hash                    common.Hash
 	BroadcastBeforeBlockNum int64
 	State                   TxAttemptState
-	ReceiptIDs              []uuid.UUID
+	TxReceiptIDs            []uuid.UUID
 }
 
 type TxReceipt struct {

@@ -43,6 +43,7 @@ func newAttempt(keyStore client.KeyStoreInterface, config *types.Config, tx *mod
 	attempt.TxID = tx.ID
 	attempt.GasPrice = gasPrice
 	attempt.Hash = hash
+	attempt.BroadcastBeforeBlockNum = -1
 
 	return &attempt, nil
 }
@@ -70,9 +71,6 @@ func sendTx(ctx context.Context, ethClient client.Client, attempt *models.TxAtte
 
 	ctx, cancel := context.WithTimeout(ctx, maxEthNodeRequestTime)
 	defer cancel()
-	// BEGIN DEBUG
-	logger.Debugw("SendTransaction", "signedTx", signedTx, "txID", attempt.TxID)
-	// END DEBUG
 	err = ethClient.SendTransaction(ctx, signedTx)
 	err = errors.WithStack(err)
 
@@ -99,25 +97,8 @@ func saveReplacementInProgressAttempt(store esStore.Store, tx *models.Tx, oldAtt
 		return errors.Wrap(errors.New("expected oldAttempt to have an ID"), errStr)
 	}
 
-	attemptIDs := tx.TxAttemptIDs
-	removeIndex := -1
-	for i, attemptID := range attemptIDs {
-		if bytes.Equal(attemptID[:], oldAttempt.ID[:]) {
-			removeIndex = i
-			break
-		}
-	}
-	copy(attemptIDs[removeIndex:], attemptIDs[removeIndex+1:])
-	attemptIDs = attemptIDs[:len(attemptIDs)-1]
-	attemptIDs = append(attemptIDs, replacementAttempt.ID)
-	tx.TxAttemptIDs = attemptIDs
-	err := store.PutTx(tx)
-	if err != nil {
-		return errors.Wrap(err, errStr)
-	}
-
 	// Delete old attempt and add new attempt
-	err = store.DeleteTxAttempt(oldAttempt.ID)
+	err := store.DeleteTxAttempt(oldAttempt.ID)
 	if err != nil {
 		return errors.Wrap(err, errStr)
 	}
@@ -125,6 +106,12 @@ func saveReplacementInProgressAttempt(store esStore.Store, tx *models.Tx, oldAtt
 	if err != nil {
 		return errors.Wrap(err, errStr)
 	}
+
+	err = store.ReplaceAttemptInTx(tx, oldAttempt, replacementAttempt)
+	if err != nil {
+		return errors.Wrap(err, errStr)
+	}
+
 	return nil
 }
 

@@ -3,9 +3,9 @@ package txmanager
 import (
 	"math/big"
 
-	esClient "github.com/celer-network/eth-services/client"
+	"github.com/celer-network/eth-services/client"
 	esStore "github.com/celer-network/eth-services/store"
-	esStoreModels "github.com/celer-network/eth-services/store/models"
+	"github.com/celer-network/eth-services/store/models"
 	"github.com/celer-network/eth-services/subscription"
 	"github.com/celer-network/eth-services/types"
 	esTypes "github.com/celer-network/eth-services/types"
@@ -26,9 +26,9 @@ type TxManager interface {
 		gasLimit uint64,
 	) (uuid.UUID, error)
 
-	GetTx(txID uuid.UUID) (*esStoreModels.Tx, error)
-	GetTxAttempt(attemptID uuid.UUID) (*esStoreModels.TxAttempt, error)
-	GetTxReceipt(receiptID uuid.UUID) (*esStoreModels.TxReceipt, error)
+	GetTx(txID uuid.UUID) (*models.Tx, error)
+	GetTxAttempt(attemptID uuid.UUID) (*models.TxAttempt, error)
+	GetTxReceipt(receiptID uuid.UUID) (*models.TxReceipt, error)
 
 	IsTxConfirmedAtOrBeforeBlockNumber(txID uuid.UUID, blockNumber int64) (bool, error)
 
@@ -55,9 +55,9 @@ type txManager struct {
 var _ TxManager = (*txManager)(nil)
 
 func NewTxManager(
-	ethClient esClient.Client,
+	ethClient client.Client,
 	store esStore.Store,
-	keyStore esClient.KeyStoreInterface,
+	keyStore client.KeyStoreInterface,
 	config *esTypes.Config,
 ) (TxManager, error) {
 	broadcaster := NewTxBroadcaster(ethClient, store, keyStore, config)
@@ -108,15 +108,15 @@ func (txm *txManager) AddTx(
 	return txID, nil
 }
 
-func (txm *txManager) GetTx(txID uuid.UUID) (*esStoreModels.Tx, error) {
+func (txm *txManager) GetTx(txID uuid.UUID) (*models.Tx, error) {
 	return txm.store.GetTx(txID)
 }
 
-func (txm *txManager) GetTxAttempt(attemptID uuid.UUID) (*esStoreModels.TxAttempt, error) {
+func (txm *txManager) GetTxAttempt(attemptID uuid.UUID) (*models.TxAttempt, error) {
 	return txm.store.GetTxAttempt(attemptID)
 }
 
-func (txm *txManager) GetTxReceipt(receiptID uuid.UUID) (*esStoreModels.TxReceipt, error) {
+func (txm *txManager) GetTxReceipt(receiptID uuid.UUID) (*models.TxReceipt, error) {
 	return txm.store.GetTxReceipt(receiptID)
 }
 
@@ -126,11 +126,11 @@ func (txm *txManager) IsTxConfirmedAtOrBeforeBlockNumber(txID uuid.UUID, blockNu
 
 func (txm *txManager) AddJob(txID uuid.UUID, metadata []byte) (uuid.UUID, error) {
 	jobID := uuid.New()
-	job := &esStoreModels.Job{
+	job := &models.Job{
 		ID:       jobID,
 		TxID:     txID,
 		Metadata: metadata,
-		State:    esStoreModels.JobStateUnhandled,
+		State:    models.JobStateUnhandled,
 	}
 	err := txm.store.PutJob(job)
 	if err != nil {
