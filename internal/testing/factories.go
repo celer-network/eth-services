@@ -108,7 +108,7 @@ func MustInsertUnconfirmedTxWithBroadcastAttempt(t *testing.T, store esStore.Sto
 
 	account, err := store.GetAccount(tx.FromAddress)
 	require.NoError(t, err)
-	account.PendingTxIDs = append(account.PendingTxIDs, tx.ID)
+	account.TxIDs = append(account.TxIDs, tx.ID)
 	require.NoError(t, store.PutAccount(account))
 	return tx
 }
@@ -128,7 +128,7 @@ func MustInsertConfirmedTxWithAttempt(t *testing.T, store esStore.Store, nonce i
 
 	account, err := store.GetAccount(tx.FromAddress)
 	require.NoError(t, err)
-	account.PendingTxIDs = append(account.PendingTxIDs, tx.ID)
+	account.TxIDs = append(account.TxIDs, tx.ID)
 	require.NoError(t, store.PutAccount(account))
 	return tx
 }
@@ -151,7 +151,7 @@ func MustInsertInProgressTxWithAttempt(t *testing.T, store esStore.Store, nonce 
 
 	account, err := store.GetAccount(tx.FromAddress)
 	require.NoError(t, err)
-	account.PendingTxIDs = append(account.PendingTxIDs, tx.ID)
+	account.TxIDs = append(account.TxIDs, tx.ID)
 	require.NoError(t, store.PutAccount(account))
 	return tx
 }
@@ -211,7 +211,7 @@ func MustInsertFatalErrorTx(t *testing.T, store esStore.Store, fromAddress commo
 	require.NoError(t, store.PutTx(tx))
 	account, err := store.GetAccount(tx.FromAddress)
 	require.NoError(t, err)
-	account.PendingTxIDs = append(account.PendingTxIDs, tx.ID)
+	account.TxIDs = append(account.TxIDs, tx.ID)
 	require.NoError(t, store.PutAccount(account))
 	return tx
 }
@@ -292,11 +292,9 @@ func MustGenerateRandomAccount(t testing.TB, opts ...interface{}) (account *mode
 	}
 
 	account = &models.Account{
-		Address:        k.Address,
-		NextNonce:      nonce,
-		PendingTxIDs:   make([]uuid.UUID, 0),
-		CompletedTxIDs: make([]uuid.UUID, 0),
-		ErroredTxIDs:   make([]uuid.UUID, 0),
+		Address:   k.Address,
+		NextNonce: nonce,
+		TxIDs:     make([]uuid.UUID, 0),
 	}
 	return account, keyJSONBytes
 }

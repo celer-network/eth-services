@@ -41,10 +41,8 @@ type Account struct {
 	// This is the nonce that should be used for the next transaction.
 	// Conceptually equivalent to geth's `PendingNonceAt` but more reliable
 	// because we have a better view of our own transactions
-	NextNonce      int64
-	PendingTxIDs   []uuid.UUID
-	CompletedTxIDs []uuid.UUID
-	ErroredTxIDs   []uuid.UUID
+	NextNonce int64
+	TxIDs     []uuid.UUID
 }
 
 type Job struct {

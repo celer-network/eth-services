@@ -94,11 +94,9 @@ func (tb *txBroadcaster) RegisterAccount(address gethCommon.Address) error {
 		return err
 	}
 	storedAccount := &models.Account{
-		Address:        address,
-		NextNonce:      -1,
-		PendingTxIDs:   make([]uuid.UUID, 0),
-		CompletedTxIDs: make([]uuid.UUID, 0),
-		ErroredTxIDs:   make([]uuid.UUID, 0),
+		Address:   address,
+		NextNonce: -1,
+		TxIDs:     make([]uuid.UUID, 0),
 	}
 	err = tb.store.PutAccount(storedAccount)
 	if err != nil {
