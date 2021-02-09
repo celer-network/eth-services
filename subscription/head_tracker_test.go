@@ -36,10 +36,10 @@ func TestHeadTracker_New(t *testing.T) {
 	ethClient.On("SubscribeNewHead", mock.Anything, mock.Anything).Return(sub, nil)
 	sub.On("Err").Return(nil)
 
-	assert.Nil(t, store.InsertHead(*esTesting.Head(1)))
+	assert.Nil(t, store.InsertHead(esTesting.Head(1)))
 	last := esTesting.Head(16)
-	assert.Nil(t, store.InsertHead(*last))
-	assert.Nil(t, store.InsertHead(*esTesting.Head(10)))
+	assert.Nil(t, store.InsertHead(last))
+	assert.Nil(t, store.InsertHead(esTesting.Head(10)))
 
 	ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{})
 	assert.Nil(t, ht.Start())
@@ -58,13 +58,13 @@ func TestHeadTracker_Save_InsertsAndTrims(t *testing.T) {
 	ethClient.On("ChainID", mock.Anything).Return(config.ChainID, nil)
 
 	for i := 0; i < 200; i++ {
-		assert.Nil(t, store.InsertHead(*esTesting.Head(i)))
+		assert.Nil(t, store.InsertHead(esTesting.Head(i)))
 	}
 
 	ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{})
 
 	h := esTesting.Head(200)
-	require.NoError(t, ht.Save(*h))
+	require.NoError(t, ht.Save(h))
 	assert.Equal(t, big.NewInt(200), ht.HighestSeenHead().ToInt())
 
 	firstHead, err := store.FirstHead()
@@ -116,7 +116,7 @@ func TestHeadTracker_Get(t *testing.T) {
 			}
 
 			if test.initial != nil {
-				assert.Nil(t, store.InsertHead(*test.initial))
+				assert.Nil(t, store.InsertHead(test.initial))
 			}
 
 			ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{})
@@ -124,7 +124,7 @@ func TestHeadTracker_Get(t *testing.T) {
 			defer ht.Stop()
 
 			if test.toSave != nil {
-				err := ht.Save(*test.toSave)
+				err := ht.Save(test.toSave)
 				assert.NoError(t, err)
 			}
 
@@ -350,13 +350,13 @@ func TestHeadTracker_SwitchesToLongestChain(t *testing.T) {
 	// Now the new chain is longer
 	blockHeaders = append(blockHeaders, &models.Head{Number: 5, Hash: esTesting.NewHash(), ParentHash: blockHeaders[7].Hash, Timestamp: time.Unix(9, 0)})
 
-	checker.On("OnNewLongestChain", mock.Anything, mock.MatchedBy(func(h models.Head) bool {
+	checker.On("OnNewLongestChain", mock.Anything, mock.MatchedBy(func(h *models.Head) bool {
 		return h.Number == 1 && h.Hash == blockHeaders[0].Hash
 	})).Return().Once()
-	checker.On("OnNewLongestChain", mock.Anything, mock.MatchedBy(func(h models.Head) bool {
+	checker.On("OnNewLongestChain", mock.Anything, mock.MatchedBy(func(h *models.Head) bool {
 		return h.Number == 3 && h.Hash == blockHeaders[1].Hash
 	})).Return().Once()
-	checker.On("OnNewLongestChain", mock.Anything, mock.MatchedBy(func(h models.Head) bool {
+	checker.On("OnNewLongestChain", mock.Anything, mock.MatchedBy(func(h *models.Head) bool {
 		if h.Number == 4 && h.Hash == blockHeaders[3].Hash {
 			// Check that the block came with its parents
 			require.NotNil(t, h.Parent)
@@ -369,7 +369,7 @@ func TestHeadTracker_SwitchesToLongestChain(t *testing.T) {
 		}
 		return false
 	})).Return().Once()
-	checker.On("OnNewLongestChain", mock.Anything, mock.MatchedBy(func(h models.Head) bool {
+	checker.On("OnNewLongestChain", mock.Anything, mock.MatchedBy(func(h *models.Head) bool {
 		if h.Number == 5 && h.Hash == blockHeaders[8].Hash {
 			// This is the new longest chain, check that it came with its parents
 			require.NotNil(t, h.Parent)
@@ -452,7 +452,7 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 	}
 	head0 := models.NewHead(gethHead0.Number, esTesting.NewHash(), gethHead0.ParentHash, gethHead0.Time)
 
-	h1 := *esTesting.Head(1)
+	h1 := esTesting.Head(1)
 	h1.ParentHash = head0.Hash
 
 	gethHead8 := &gethTypes.Header{
@@ -462,7 +462,7 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 	}
 	head8 := models.NewHead(gethHead8.Number, esTesting.NewHash(), gethHead8.ParentHash, gethHead8.Time)
 
-	h9 := *esTesting.Head(9)
+	h9 := esTesting.Head(9)
 	h9.ParentHash = head8.Hash
 
 	gethHead10 := &gethTypes.Header{
@@ -472,25 +472,25 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 	}
 	head10 := models.NewHead(gethHead10.Number, esTesting.NewHash(), gethHead10.ParentHash, gethHead10.Time)
 
-	h11 := *esTesting.Head(11)
+	h11 := esTesting.Head(11)
 	h11.ParentHash = head10.Hash
 
-	h12 := *esTesting.Head(12)
+	h12 := esTesting.Head(12)
 	h12.ParentHash = h11.Hash
 
-	h13 := *esTesting.Head(13)
+	h13 := esTesting.Head(13)
 	h13.ParentHash = h12.Hash
 
-	h14Orphaned := *esTesting.Head(14)
+	h14Orphaned := esTesting.Head(14)
 	h14Orphaned.ParentHash = h13.Hash
 
-	h14 := *esTesting.Head(14)
+	h14 := esTesting.Head(14)
 	h14.ParentHash = h13.Hash
 
-	h15 := *esTesting.Head(15)
+	h15 := esTesting.Head(15)
 	h15.ParentHash = h14.Hash
 
-	heads := []models.Head{
+	heads := []*models.Head{
 		h9,
 		h11,
 		h12,
@@ -538,7 +538,7 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 		ethClient := new(mocks.Client)
 
 		ethClient.On("HeaderByNumber", mock.Anything, big.NewInt(10)).
-			Return(&head10, nil)
+			Return(head10, nil)
 
 		ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{}, esTesting.NeverSleeper{})
 
@@ -572,9 +572,9 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 		ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{}, esTesting.NeverSleeper{})
 
 		ethClient.On("HeaderByNumber", mock.Anything, big.NewInt(10)).
-			Return(&head10, nil)
+			Return(head10, nil)
 		ethClient.On("HeaderByNumber", mock.Anything, big.NewInt(8)).
-			Return(&head8, nil)
+			Return(head8, nil)
 
 		// Needs to be 8 because there are 8 heads in chain (15,14,13,12,11,10,9,8)
 		h, err := ht.GetChainWithBackfill(ctx, h15, 8)
@@ -599,7 +599,7 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 
 		ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{}, esTesting.NeverSleeper{})
 
-		h16 := *esTesting.Head(16)
+		h16 := esTesting.Head(16)
 		h16.ParentHash = h15.Hash
 
 		_, err := ht.GetChainWithBackfill(ctx, h16, 3)
@@ -636,7 +636,7 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 
 		ethClient := new(mocks.Client)
 		ethClient.On("HeaderByNumber", mock.Anything, big.NewInt(0)).
-			Return(&head0, nil)
+			Return(head0, nil)
 
 		ht := subscription.NewHeadTracker(ethClient, store, config, []subscription.HeadTrackable{}, esTesting.NeverSleeper{})
 
@@ -660,7 +660,7 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 
 		ethClient := new(mocks.Client)
 		ethClient.On("HeaderByNumber", mock.Anything, big.NewInt(10)).
-			Return(&head10, nil).
+			Return(head10, nil).
 			Once()
 		ethClient.On("HeaderByNumber", mock.Anything, big.NewInt(8)).
 			Return(nil, ethereum.NotFound).
@@ -688,7 +688,7 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 
 		ethClient := new(mocks.Client)
 		ethClient.On("HeaderByNumber", mock.Anything, big.NewInt(10)).
-			Return(&head10, nil)
+			Return(head10, nil)
 		ethClient.On("HeaderByNumber", mock.Anything, big.NewInt(8)).
 			Return(nil, context.DeadlineExceeded)
 
@@ -706,7 +706,7 @@ func TestHeadTracker_GetChainWithBackfill(t *testing.T) {
 }
 
 type blockingCallback struct {
-	called chan models.Head
+	called chan *models.Head
 	resume chan bool
 }
 
@@ -718,7 +718,7 @@ func (c *blockingCallback) Disconnect() {
 }
 
 // OnNewLongestChain increases the OnNewLongestChainCount count by one
-func (c *blockingCallback) OnNewLongestChain(ctx context.Context, h models.Head) {
+func (c *blockingCallback) OnNewLongestChain(ctx context.Context, h *models.Head) {
 	c.called <- h
 	<-c.resume
 }
@@ -750,7 +750,7 @@ func TestHeadTracker_RingBuffer(t *testing.T) {
 		sub.On("Unsubscribe").Return()
 		sub.On("Err").Return(nil)
 
-		called := make(chan models.Head)
+		called := make(chan *models.Head)
 		resume := make(chan bool)
 		cb := &blockingCallback{
 			called: called,

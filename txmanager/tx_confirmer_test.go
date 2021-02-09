@@ -32,7 +32,7 @@ func mustAddTxToAccount(t *testing.T, store esStore.Store, fromAddress gethCommo
 
 	account, err := store.GetAccount(fromAddress)
 	require.NoError(t, err)
-	account.PendingTxIDs = append(account.PendingTxIDs, tx.ID)
+	account.TxIDs = append(account.TxIDs, tx.ID)
 	require.NoError(t, store.PutAccount(account))
 }
 
@@ -1663,8 +1663,8 @@ func TestTxConfirmer_EnsureConfirmedTransactionsInLongestChain(t *testing.T) {
 		attempt3.SignedRawTx = hexutil.MustDecode("0xf88c8301f3a88503b9aca0008316e36094151445852b0cfdf6a4cc81440f2af99176e8ad0880a4daa6d556000000000000000000000000000000000000000000000000000000000000000026a0dcb5a7ad52b96a866257134429f944c505820716567f070e64abb74899803855a04c13eff2a22c218e68da80111e1bb6dc665d3dea7104ab40ff8a0275a99f630d")
 		require.NoError(t, store.PutTxAttempt(attempt2))
 		require.NoError(t, store.PutTxAttempt(attempt3))
-		require.NoError(t, store.AddAttemptToTx(tx, attempt2))
-		require.NoError(t, store.AddAttemptToTx(tx, attempt3))
+		require.NoError(t, store.AddOrUpdateAttempt(tx, attempt2))
+		require.NoError(t, store.AddOrUpdateAttempt(tx, attempt3))
 
 		// Receipt is within head height but a different block hash
 		esTesting.MustInsertTxReceipt(t, store, head.Parent.Number, esTesting.NewHash(), attempt2.Hash, attempt2)

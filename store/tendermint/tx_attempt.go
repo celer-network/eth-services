@@ -43,7 +43,9 @@ func (store *TMStore) GetAttemptsForTx(tx *models.Tx) ([]*models.TxAttempt, erro
 	return attempts, nil
 }
 
-func (store *TMStore) AddAttemptToTx(tx *models.Tx, attempt *models.TxAttempt) error {
+// AddOrUpdateAttempt adds a new attempt or updates an existing attempt assuming only the state, NOT
+// the gas price, has changed. In case of an addition, the list of attempts are sorted by gas price.
+func (store *TMStore) AddOrUpdateAttempt(tx *models.Tx, attempt *models.TxAttempt) error {
 	attemptIDs := tx.TxAttemptIDs
 	update := false
 	for _, attemptID := range attemptIDs {
@@ -54,16 +56,19 @@ func (store *TMStore) AddAttemptToTx(tx *models.Tx, attempt *models.TxAttempt) e
 	}
 	if !update {
 		attemptIDs = append(attemptIDs, attempt.ID)
-	}
-	tx.TxAttemptIDs = attemptIDs
-	tx, err := store.sortAttemptsByGasPriceForTx(tx)
-	if err != nil {
-		return err
+		tx.TxAttemptIDs = attemptIDs
+		var err error
+		tx, err = store.sortAttemptsByGasPriceForTx(tx)
+		if err != nil {
+			return err
+		}
 	}
 	return store.PutTx(tx)
 }
 
-func (store *TMStore) ReplaceAttemptInTx(tx *models.Tx, oldAttempt *models.TxAttempt, newAttempt *models.TxAttempt) error {
+// ReplaceAttempt removes an existing attempt and adds a new attempt with a different ID. Sorts the new list of attempts
+// by gas price.
+func (store *TMStore) ReplaceAttempt(tx *models.Tx, oldAttempt *models.TxAttempt, newAttempt *models.TxAttempt) error {
 	attemptIDs := tx.TxAttemptIDs
 	removeIndex := -1
 	for i, attemptID := range attemptIDs {
@@ -116,17 +121,17 @@ func (store *TMStore) GetInProgressAttempts(address common.Address) ([]*models.T
 		return nil, err
 	}
 	var attempts []*models.TxAttempt
-	for _, txID := range account.PendingTxIDs {
+	for _, txID := range account.TxIDs {
 		tx, getTxErr := store.GetTx(txID)
 		if getTxErr != nil {
-			return nil, err
+			return nil, getTxErr
 		}
 		if tx.State == models.TxStateConfirmed || tx.State == models.TxStateConfirmedMissingReceipt ||
 			tx.State == models.TxStateUnconfirmed {
 			for _, attemptID := range tx.TxAttemptIDs {
 				attempt, getAttemptErr := store.GetTxAttempt(attemptID)
 				if getAttemptErr != nil {
-					return nil, err
+					return nil, getAttemptErr
 				}
 				if attempt.State == models.TxAttemptStateInProgress {
 					attempts = append(attempts, attempt)

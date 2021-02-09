@@ -34,12 +34,13 @@ func (store *TMStore) GetAccounts() ([]*models.Account, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, errStrCreateIter)
 	}
+	defer iter.Close()
 	var accounts []*models.Account
 	for ; iter.Valid(); iter.Next() {
 		value := iter.Value()
 		var account models.Account
-		unmarshalErr := msgpack.Unmarshal(value, &account)
-		if unmarshalErr != nil {
+		err = msgpack.Unmarshal(value, &account)
+		if err != nil {
 			return nil, toDecodeAccountError(err)
 		}
 		accounts = append(accounts, &account)
@@ -51,8 +52,7 @@ func (store *TMStore) GetAccounts() ([]*models.Account, error) {
 }
 
 func (store *TMStore) GetNextNonce(address common.Address) (int64, error) {
-	var account models.Account
-	err := get(store.nsAccount, address.Bytes(), &account)
+	account, err := store.GetAccount(address)
 	if err != nil {
 		return 0, err
 	}
@@ -60,17 +60,12 @@ func (store *TMStore) GetNextNonce(address common.Address) (int64, error) {
 }
 
 func (store *TMStore) SetNextNonce(address common.Address, nextNonce int64) error {
-	var account models.Account
-	err := get(store.nsAccount, address.Bytes(), &account)
+	account, err := store.GetAccount(address)
 	if err != nil {
 		return err
 	}
 	account.NextNonce = nextNonce
-	err = set(store.nsAccount, address.Bytes(), &account)
-	if err != nil {
-		return err
-	}
-	return nil
+	return store.PutAccount(account)
 }
 
 func toDecodeAccountError(err error) error {

@@ -18,7 +18,7 @@ var (
 // Store defines the interface for the storage layer
 type Store interface {
 	// InsertHead inserts a block head
-	InsertHead(head models.Head) error
+	InsertHead(head *models.Head) error
 
 	// LastHead returns the head with the highest number. In the case of ties (e.g.
 	// due to re-org) it returns the most recently seen head entry.
@@ -30,11 +30,11 @@ type Store interface {
 	// HeadByHash fetches the head with the given hash from the db, returns nil if none exists.
 	HeadByHash(hash common.Hash) (*models.Head, error)
 
-	// TrimOldHeads deletes heads such that only the top N block numbers remain.
+	// TrimOldHeads deletes "depth" number of heads such that only the top N block numbers remain.
 	TrimOldHeads(depth int64) error
 
 	// Chain returns the chain of heads starting at hash and up to lookback parents.
-	Chain(hash common.Hash, lookback int64) (models.Head, error)
+	Chain(hash common.Hash, lookback int64) (*models.Head, error)
 
 	GetAccount(address common.Address) (*models.Account, error)
 	// GetAccounts gets the list of accounts
@@ -49,8 +49,8 @@ type Store interface {
 	DeleteTxAttempt(id uuid.UUID) error
 
 	GetAttemptsForTx(tx *models.Tx) ([]*models.TxAttempt, error)
-	AddAttemptToTx(tx *models.Tx, attempt *models.TxAttempt) error
-	ReplaceAttemptInTx(tx *models.Tx, oldAttempt *models.TxAttempt, newAttempt *models.TxAttempt) error
+	AddOrUpdateAttempt(tx *models.Tx, attempt *models.TxAttempt) error
+	ReplaceAttempt(tx *models.Tx, oldAttempt *models.TxAttempt, newAttempt *models.TxAttempt) error
 
 	GetTxReceipt(id uuid.UUID) (*models.TxReceipt, error)
 	PutTxReceipt(receipt *models.TxReceipt) error
@@ -65,7 +65,7 @@ type Store interface {
 		gasLimit uint64,
 	) error
 
-	GetOneInProgressTx(fromAddress common.Address) (*models.Tx, error)
+	GetInProgressTx(fromAddress common.Address) (*models.Tx, error)
 
 	GetNextNonce(address common.Address) (int64, error)
 
@@ -77,7 +77,9 @@ type Store interface {
 
 	SetBroadcastBeforeBlockNum(blockNum int64) error
 
-	// MarkConfirmedMissingReceipt
+	// MarkConfirmedMissingReceipt handles cases where transactions are confirmed but receipts can't
+	// be fetched.
+	//
 	// It is possible that we can fail to get a receipt for all TxAttempts
 	// even though a transaction with this nonce has long since been confirmed (we
 	// know this because transactions with higher nonces HAVE returned a receipt).

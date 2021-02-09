@@ -279,7 +279,7 @@ func (tb *txBroadcaster) handleAnyInProgressTx(fromAddress gethCommon.Address) e
 // It may or may not have been broadcast to an eth node.
 func (tb *txBroadcaster) getInProgressTx(fromAddress gethCommon.Address) (*models.Tx, error) {
 	errStr := "getInProgress failed"
-	tx, err := tb.store.GetOneInProgressTx(fromAddress)
+	tx, err := tb.store.GetInProgressTx(fromAddress)
 	if err != nil {
 		if err == store.ErrNotFound {
 			return nil, nil
@@ -413,7 +413,7 @@ func (tb *txBroadcaster) saveInProgressTxWithAttempt(tx *models.Tx, attempt *mod
 		return errors.Wrap(err, errStr)
 	}
 	tx.State = models.TxStateInProgress
-	err = tb.store.AddAttemptToTx(tx, attempt)
+	err = tb.store.AddOrUpdateAttempt(tx, attempt)
 	if err != nil {
 		return errors.Wrap(err, errStr)
 	}

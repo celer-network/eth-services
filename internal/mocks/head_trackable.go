@@ -34,6 +34,6 @@ func (_m *HeadTrackable) Disconnect() {
 }
 
 // OnNewLongestChain provides a mock function with given fields: ctx, head
-func (_m *HeadTrackable) OnNewLongestChain(ctx context.Context, head models.Head) {
+func (_m *HeadTrackable) OnNewLongestChain(ctx context.Context, head *models.Head) {
 	_m.Called(ctx, head)
 }

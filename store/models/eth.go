@@ -20,6 +20,8 @@ type TxState string
 type TxAttemptState string
 type JobState string
 
+type Log = types.Log
+
 const (
 	TxStateUnstarted               = TxState("unstarted")
 	TxStateInProgress              = TxState("in_progress")
@@ -35,6 +37,11 @@ const (
 	JobStateUnhandled = JobState("unhandled")
 	JobStateHandled   = JobState("handled")
 )
+
+// WeiPerEth is amount of Wei currency units in one Eth.
+var WeiPerEth = new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)
+
+var emptyHash = common.Hash{}
 
 type Account struct {
 	Address common.Address
@@ -65,16 +72,16 @@ type Tx struct {
 	TxAttemptIDs   []uuid.UUID
 }
 
-func (e Tx) GetError() error {
-	if e.Error == "" {
+func (tx *Tx) GetError() error {
+	if tx.Error == "" {
 		return nil
 	}
-	return errors.New(e.Error)
+	return errors.New(tx.Error)
 }
 
 // GetID allows Tx to be used as jsonapi.MarshalIdentifier
-func (e Tx) GetID() string {
-	return fmt.Sprintf("%d", e.ID)
+func (tx *Tx) GetID() string {
+	return fmt.Sprintf("%d", tx.ID)
 }
 
 type TxAttempt struct {
@@ -98,7 +105,7 @@ type TxReceipt struct {
 }
 
 // GetSignedTx decodes the SignedRawTx into a types.Transaction struct
-func (a TxAttempt) GetSignedTx() (*types.Transaction, error) {
+func (a *TxAttempt) GetSignedTx() (*types.Transaction, error) {
 	s := rlp.NewStream(bytes.NewReader(a.SignedRawTx), 0)
 	signedTx := new(types.Transaction)
 	if err := signedTx.DecodeRLP(s); err != nil {
@@ -118,8 +125,8 @@ type Head struct {
 }
 
 // NewHead returns a Head instance.
-func NewHead(number *big.Int, blockHash common.Hash, parentHash common.Hash, timestamp uint64) Head {
-	return Head{
+func NewHead(number *big.Int, blockHash common.Hash, parentHash common.Hash, timestamp uint64) *Head {
+	return &Head{
 		Number:     number.Int64(),
 		Hash:       blockHash,
 		ParentHash: parentHash,
@@ -127,31 +134,33 @@ func NewHead(number *big.Int, blockHash common.Hash, parentHash common.Hash, tim
 	}
 }
 
-// EarliestInChain recurses through parents until it finds the earliest one
-func (h Head) EarliestInChain() Head {
+// EarliestInChain traces through parents until it finds the earliest one.
+func (h *Head) EarliestInChain() *Head {
+	curr := h
 	for {
-		if h.Parent != nil {
-			h = *h.Parent
+		if curr.Parent != nil {
+			curr = curr.Parent
 		} else {
 			break
 		}
 	}
-	return h
+	return curr
 }
 
-// ChainLength returns the length of the chain followed by recursively looking up parents
-func (h Head) ChainLength() int64 {
-	l := int64(1)
+// ChainLength returns the length of the chain by following the parents.
+func (h *Head) ChainLength() int64 {
+	curr := h
+	length := int64(1)
 
 	for {
-		if h.Parent != nil {
-			l++
-			h = *h.Parent
+		if curr.Parent != nil {
+			length++
+			curr = curr.Parent
 		} else {
 			break
 		}
 	}
-	return l
+	return length
 }
 
 // String returns a string representation of this number.
@@ -168,12 +177,12 @@ func (h *Head) ToInt() *big.Int {
 }
 
 // GreaterThan compares BlockNumbers and returns true if the receiver BlockNumber is greater than
-// the supplied BlockNumber
+// the supplied BlockNumber.
 func (h *Head) GreaterThan(r *Head) bool {
 	if h == nil {
 		return false
 	}
-	if h != nil && r == nil {
+	if r == nil {
 		return true
 	}
 	return h.Number > r.Number
@@ -209,7 +218,8 @@ func (h *Head) UnmarshalJSON(bs []byte) error {
 	h.Hash = jsonHead.Hash
 	h.Number = (*big.Int)(jsonHead.Number).Int64()
 	h.ParentHash = jsonHead.ParentHash
-	h.Timestamp = time.Unix(int64(jsonHead.Timestamp), 0).UTC()
+	h.Timestamp = time.Unix(int64(jsonHead.Timestamp), 0)
+	h.Parent = nil
 	return nil
 }
 
@@ -222,11 +232,11 @@ func (h *Head) MarshalJSON() ([]byte, error) {
 	}
 
 	var jsonHead head
-	if h.Hash != (common.Hash{}) {
+	if h.Hash != (emptyHash) {
 		jsonHead.Hash = &h.Hash
 	}
 	jsonHead.Number = (*hexutil.Big)(big.NewInt(int64(h.Number)))
-	if h.ParentHash != (common.Hash{}) {
+	if h.ParentHash != (emptyHash) {
 		jsonHead.ParentHash = &h.ParentHash
 	}
 	if h.Timestamp != (time.Time{}) {
@@ -236,14 +246,7 @@ func (h *Head) MarshalJSON() ([]byte, error) {
 	return json.Marshal(jsonHead)
 }
 
-// WeiPerEth is amount of Wei currency units in one Eth.
-var WeiPerEth = new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)
-
-type Log = types.Log
-
-var emptyHash = common.Hash{}
-
-// Unconfirmed returns true if the transaction is not confirmed.
+// ReceiptIsUnconfirmed returns true if the transaction is not confirmed.
 func ReceiptIsUnconfirmed(txr *types.Receipt) bool {
 	return txr == nil || txr.TxHash == emptyHash || txr.BlockNumber == nil
 }

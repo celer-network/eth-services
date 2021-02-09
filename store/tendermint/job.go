@@ -34,22 +34,17 @@ func (store *TMStore) GetUnhandledJobIDs() ([]uuid.UUID, error) {
 	if err != nil {
 		return nil, toCreateIterError(err)
 	}
-	var iterError error
+	defer iter.Close()
 	for ; iter.Valid(); iter.Next() {
 		value := iter.Value()
 		var job models.Job
-		unmarshalErr := msgpack.Unmarshal(value, &job)
-		if unmarshalErr != nil {
-			iterError = toDecodeTxError(err)
-			break
+		err := msgpack.Unmarshal(value, &job)
+		if err != nil {
+			return nil, toDecodeTxError(err)
 		}
 		if job.State == models.JobStateUnhandled {
 			jobIDs = append(jobIDs, job.ID)
 		}
-	}
-	iter.Close()
-	if iterError != nil {
-		return nil, iterError
 	}
 	if len(jobIDs) == 0 {
 		return nil, esStore.ErrNotFound

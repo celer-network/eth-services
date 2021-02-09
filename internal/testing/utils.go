@@ -50,7 +50,7 @@ func NewConfig(t testing.TB) *types.Config {
 
 // Head given the value convert it into an Head
 func Head(val interface{}) *models.Head {
-	var h models.Head
+	var h *models.Head
 	time := uint64(0)
 	switch t := val.(type) {
 	case int:
@@ -64,5 +64,5 @@ func Head(val interface{}) *models.Head {
 	default:
 		panic(fmt.Sprintf("Could not convert %v of type %T to Head", val, val))
 	}
-	return &h
+	return h
 }

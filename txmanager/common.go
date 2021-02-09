@@ -107,7 +107,7 @@ func saveReplacementInProgressAttempt(store esStore.Store, tx *models.Tx, oldAtt
 		return errors.Wrap(err, errStr)
 	}
 
-	err = store.ReplaceAttemptInTx(tx, oldAttempt, replacementAttempt)
+	err = store.ReplaceAttempt(tx, oldAttempt, replacementAttempt)
 	if err != nil {
 		return errors.Wrap(err, errStr)
 	}

@@ -80,7 +80,7 @@ func (tc *txConfirmer) Disconnect() {
 	// pass
 }
 
-func (tc *txConfirmer) OnNewLongestChain(ctx context.Context, head models.Head) {
+func (tc *txConfirmer) OnNewLongestChain(ctx context.Context, head *models.Head) {
 	if err := tc.ProcessHead(ctx, head); err != nil {
 		tc.logger.Errorw("TxConfirmer error",
 			"err", err,
@@ -89,14 +89,14 @@ func (tc *txConfirmer) OnNewLongestChain(ctx context.Context, head models.Head) 
 }
 
 // ProcessHead takes all required transactions for the confirmer on a new head
-func (tc *txConfirmer) ProcessHead(ctx context.Context, head models.Head) error {
+func (tc *txConfirmer) ProcessHead(ctx context.Context, head *models.Head) error {
 	tc.lock.Lock()
 	defer tc.lock.Unlock()
 	return tc.processHead(ctx, head)
 }
 
 // NOTE: This SHOULD NOT be run concurrently or it could behave badly
-func (tc *txConfirmer) processHead(ctx context.Context, head models.Head) error {
+func (tc *txConfirmer) processHead(ctx context.Context, head *models.Head) error {
 	if err := tc.store.SetBroadcastBeforeBlockNum(head.Number); err != nil {
 		return errors.Wrap(err, "SetBroadcastBeforeBlockNum failed")
 	}
@@ -137,7 +137,7 @@ func (tc *txConfirmer) processHead(ctx context.Context, head models.Head) error 
 		)
 	}()
 
-	return errors.Wrap(tc.EnsureConfirmedTxsInLongestChain(ctx, accounts, &head), "EnsureConfirmedTransactionsInLongestChain failed")
+	return errors.Wrap(tc.EnsureConfirmedTxsInLongestChain(ctx, accounts, head), "EnsureConfirmedTransactionsInLongestChain failed")
 }
 
 // receiptFetcherWorkerCount is the max number of concurrently executing
@@ -456,7 +456,7 @@ func (tc *txConfirmer) saveInProgressAttempt(tx *models.Tx, attempt *models.TxAt
 	if err != nil {
 		return errors.Wrap(err, errStr)
 	}
-	err = tc.store.AddAttemptToTx(tx, attempt)
+	err = tc.store.AddOrUpdateAttempt(tx, attempt)
 	if err != nil {
 		return errors.Wrap(err, errStr)
 	}

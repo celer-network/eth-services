@@ -45,7 +45,7 @@ func (store *TMStore) AddTx(
 	if err != nil {
 		return err
 	}
-	account.PendingTxIDs = append(account.PendingTxIDs, txID)
+	account.TxIDs = append(account.TxIDs, txID)
 	return store.PutAccount(account)
 }
 
@@ -62,13 +62,13 @@ func (store *TMStore) GetTx(id uuid.UUID) (*models.Tx, error) {
 	return &tx, nil
 }
 
-func (store *TMStore) GetOneInProgressTx(fromAddress common.Address) (*models.Tx, error) {
+func (store *TMStore) GetInProgressTx(fromAddress common.Address) (*models.Tx, error) {
 	account, err := store.GetAccount(fromAddress)
 	if err != nil {
 		return nil, err
 	}
 	var inProgressTx *models.Tx
-	for _, txID := range account.PendingTxIDs {
+	for _, txID := range account.TxIDs {
 		tx, getTxErr := store.GetTx(txID)
 		if getTxErr != nil {
 			return nil, getTxErr
@@ -91,7 +91,7 @@ func (store *TMStore) GetNextUnstartedTx(fromAddress common.Address) (*models.Tx
 		return nil, err
 	}
 	var unstartedTx *models.Tx
-	for _, txID := range account.PendingTxIDs {
+	for _, txID := range account.TxIDs {
 		tx, getTxErr := store.GetTx(txID)
 		if getTxErr != nil {
 			return nil, getTxErr
@@ -113,23 +113,19 @@ func (store *TMStore) GetTxsRequiringReceiptFetch() ([]*models.Tx, error) {
 	if err != nil {
 		return nil, toCreateIterError(err)
 	}
-	var iterError error
+	defer iter.Close()
 	for ; iter.Valid(); iter.Next() {
 		var tx models.Tx
 		value := iter.Value()
-		unmarshalErr := msgpack.Unmarshal(value, &tx)
-		if unmarshalErr != nil {
-			iterError = toDecodeTxError(err)
-			break
+		err = msgpack.Unmarshal(value, &tx)
+		if err != nil {
+			return nil, toDecodeTxError(err)
 		}
 		if tx.State == models.TxStateUnconfirmed || tx.State == models.TxStateConfirmedMissingReceipt {
 			txs = append(txs, &tx)
 		}
 	}
-	iter.Close()
-	if iterError != nil {
-		return nil, iterError
-	}
+	// NOTE: Returns (nil, nil) when not found instead of (nil, ErrNotFound)
 	return txs, nil
 }
 
@@ -138,14 +134,13 @@ func (store *TMStore) SetBroadcastBeforeBlockNum(blockNum int64) error {
 	if err != nil {
 		return toCreateIterError(err)
 	}
-	var iterError error
+	defer iter.Close()
 	for ; iter.Valid(); iter.Next() {
 		var attempt models.TxAttempt
 		value := iter.Value()
-		unmarshalErr := msgpack.Unmarshal(value, &attempt)
-		if unmarshalErr != nil {
-			iterError = toDecodeTxAttemptError(err)
-			break
+		err := msgpack.Unmarshal(value, &attempt)
+		if err != nil {
+			return toDecodeTxAttemptError(err)
 		}
 		if attempt.State == models.TxAttemptStateBroadcast && attempt.BroadcastBeforeBlockNum == -1 {
 			attempt.BroadcastBeforeBlockNum = blockNum
@@ -154,10 +149,6 @@ func (store *TMStore) SetBroadcastBeforeBlockNum(blockNum int64) error {
 				return putErr
 			}
 		}
-	}
-	iter.Close()
-	if iterError != nil {
-		return iterError
 	}
 	return nil
 }
@@ -171,7 +162,7 @@ func (store *TMStore) MarkConfirmedMissingReceipt() error {
 		// Get max nonce for confirmed Txs
 		var txs []*models.Tx
 		var maxNonce int64 = -1
-		for _, txID := range account.PendingTxIDs {
+		for _, txID := range account.TxIDs {
 			tx, getTxErr := store.GetTx(txID)
 			if getTxErr != nil {
 				return getTxErr
@@ -207,7 +198,7 @@ func (store *TMStore) MarkOldTxsMissingReceiptAsErrored(cutoff int64) error {
 	}
 	for _, account := range accounts {
 		var txsToUpdate []*models.Tx
-		for _, txID := range account.PendingTxIDs {
+		for _, txID := range account.TxIDs {
 			tx, getTxErr := store.GetTx(txID)
 			if getTxErr != nil {
 				return getTxErr
@@ -253,7 +244,7 @@ func (store *TMStore) GetTxsRequiringNewAttempt(
 		return nil, err
 	}
 	var txs []*models.Tx
-	for _, txID := range account.PendingTxIDs {
+	for _, txID := range account.TxIDs {
 		tx, getTxErr := store.GetTx(txID)
 		if getTxErr != nil {
 			return nil, getTxErr
@@ -263,12 +254,17 @@ func (store *TMStore) GetTxsRequiringNewAttempt(
 		}
 	}
 
+	numTxs := len(txs)
+	if numTxs == 0 {
+		return txs, nil
+	}
+
 	// Sort txs by ascending nonce
 	sort.Slice(txs, func(i int, j int) bool {
 		return txs[i].Nonce < txs[j].Nonce
 	})
 
-	limit := len(txs)
+	limit := numTxs
 	if depth > 0 && depth < limit {
 		limit = depth
 	}
@@ -313,7 +309,7 @@ func (store *TMStore) GetTxsConfirmedAtOrAboveBlockHeight(blockNum int64) ([]*mo
 	}
 	for _, account := range accounts {
 		var txs []*models.Tx
-		for _, txID := range account.PendingTxIDs {
+		for _, txID := range account.TxIDs {
 			tx, getTxErr := store.GetTx(txID)
 			if getTxErr != nil {
 				return nil, getTxErr

@@ -93,7 +93,7 @@ func TestTxBroadcaster_ProcessUnstartedTxs_Success(t *testing.T) {
 
 		require.NoError(t, store.PutTx(txUnconfirmed))
 		require.NoError(t, store.PutTx(txWithError))
-		account.PendingTxIDs = append(account.PendingTxIDs, txUnconfirmed.ID, txWithError.ID)
+		account.TxIDs = append(account.TxIDs, txUnconfirmed.ID, txWithError.ID)
 		require.NoError(t, store.PutAccount(account))
 
 		require.NoError(t, tb.ProcessUnstartedTxs(account))
@@ -124,7 +124,7 @@ func TestTxBroadcaster_ProcessUnstartedTxs_Success(t *testing.T) {
 		})).Return(nil).Once()
 
 		require.NoError(t, store.PutTx(tx))
-		account.PendingTxIDs = append(account.PendingTxIDs, tx.ID)
+		account.TxIDs = append(account.TxIDs, tx.ID)
 		require.NoError(t, store.PutAccount(account))
 
 		// Do the thing
@@ -218,7 +218,7 @@ func TestTxBroadcaster_ProcessUnstartedTxs_Success(t *testing.T) {
 		require.NoError(t, store.PutTx(firstTx))
 		require.NoError(t, store.PutTx(secondTx))
 		require.NoError(t, store.PutTx(thirdTx))
-		account.PendingTxIDs = append(account.PendingTxIDs, firstTx.ID, secondTx.ID, thirdTx.ID)
+		account.TxIDs = append(account.TxIDs, firstTx.ID, secondTx.ID, thirdTx.ID)
 		require.NoError(t, store.PutAccount(account))
 
 		// Do the thing
@@ -320,7 +320,7 @@ func TestTxBroadcaster_AssignsNonceOnFirstRun(t *testing.T) {
 		State:          models.TxStateUnstarted,
 	}
 	require.NoError(t, store.PutTx(tx))
-	account.PendingTxIDs = append(account.PendingTxIDs, tx.ID)
+	account.TxIDs = append(account.TxIDs, tx.ID)
 	require.NoError(t, store.PutAccount(account))
 
 	t.Run("when eth node returns error", func(t *testing.T) {
@@ -648,7 +648,7 @@ func TestTxBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 			State:          models.TxStateUnstarted,
 		}
 		require.NoError(t, store.PutTx(tx))
-		account.PendingTxIDs = append(account.PendingTxIDs, tx.ID)
+		account.TxIDs = append(account.TxIDs, tx.ID)
 		require.NoError(t, store.PutAccount(account))
 
 		// First send, replacement underpriced
@@ -693,7 +693,7 @@ func TestTxBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 		// Update account
 		account, err := store.GetAccount(fromAddress)
 		require.NoError(t, err)
-		account.PendingTxIDs = append(account.PendingTxIDs, tx.ID)
+		account.TxIDs = append(account.TxIDs, tx.ID)
 		require.NoError(t, store.PutAccount(account))
 
 		ethClient.On("SendTransaction", mock.Anything, mock.MatchedBy(func(tx *gethTypes.Transaction) bool {
@@ -738,7 +738,7 @@ func TestTxBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 		// Update account
 		account, err := store.GetAccount(fromAddress)
 		require.NoError(t, err)
-		account.PendingTxIDs = append(account.PendingTxIDs, tx.ID)
+		account.TxIDs = append(account.TxIDs, tx.ID)
 		require.NoError(t, store.PutAccount(account))
 
 		ethClient.On("SendTransaction", mock.Anything, mock.MatchedBy(func(tx *gethTypes.Transaction) bool {
@@ -807,7 +807,7 @@ func TestTxBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 		// Update account
 		account, err := store.GetAccount(fromAddress)
 		require.NoError(t, err)
-		account.PendingTxIDs = append(account.PendingTxIDs, tx.ID)
+		account.TxIDs = append(account.TxIDs, tx.ID)
 		require.NoError(t, store.PutAccount(account))
 
 		// First was underpriced
@@ -856,7 +856,7 @@ func TestTxBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 	// Update account
 	account, err = store.GetAccount(fromAddress)
 	require.NoError(t, err)
-	account.PendingTxIDs = append(account.PendingTxIDs, txUnfinished.ID)
+	account.TxIDs = append(account.TxIDs, txUnfinished.ID)
 	require.NoError(t, store.PutAccount(account))
 
 	t.Run("failed to reach node for some reason", func(t *testing.T) {
@@ -940,7 +940,7 @@ func TestTxBroadcaster_ProcessUnstartedTxs_Errors(t *testing.T) {
 		// Update account
 		account, err := store.GetAccount(fromAddress)
 		require.NoError(t, err)
-		account.PendingTxIDs = append(account.PendingTxIDs, tx.ID)
+		account.TxIDs = append(account.TxIDs, tx.ID)
 		require.NoError(t, store.PutAccount(account))
 
 		// First was underpriced
@@ -985,7 +985,7 @@ func TestTxBroadcaster_ProcessUnstartedTxs_KeystoreErrors(t *testing.T) {
 			State:          models.TxStateUnstarted,
 		}
 		require.NoError(t, store.PutTx(tx))
-		account.PendingTxIDs = append(account.PendingTxIDs, tx.ID)
+		account.TxIDs = append(account.TxIDs, tx.ID)
 		require.NoError(t, store.PutAccount(account))
 
 		keyStore.On("GetAccountByAddress", fromAddress).Return(gethAccounts.Account{}, errors.New("authentication needed: password or unlock")).Once()
@@ -1022,7 +1022,7 @@ func TestTxBroadcaster_ProcessUnstartedTxs_KeystoreErrors(t *testing.T) {
 			State:          models.TxStateUnstarted,
 		}
 		require.NoError(t, store.PutTx(tx))
-		account.PendingTxIDs = append(account.PendingTxIDs, tx.ID)
+		account.TxIDs = append(account.TxIDs, tx.ID)
 		require.NoError(t, store.PutAccount(account))
 
 		signingAccount := gethAccounts.Account{Address: fromAddress}

@@ -38,7 +38,7 @@ func (m *jobMonitor) Disconnect() {
 	// pass
 }
 
-func (m *jobMonitor) OnNewLongestChain(ctx context.Context, head models.Head) {
+func (m *jobMonitor) OnNewLongestChain(ctx context.Context, head *models.Head) {
 	m.lock.Lock()
 	for jobID, handler := range m.jobs {
 		currJobID := jobID
@@ -50,7 +50,7 @@ func (m *jobMonitor) OnNewLongestChain(ctx context.Context, head models.Head) {
 	m.lock.Unlock()
 }
 
-func (m *jobMonitor) handleJob(head models.Head, jobID uuid.UUID, handler JobHandler) {
+func (m *jobMonitor) handleJob(head *models.Head, jobID uuid.UUID, handler JobHandler) {
 	blockNumber := head.Number
 	if blockNumber == -1 {
 		return

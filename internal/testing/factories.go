@@ -104,7 +104,7 @@ func MustInsertUnconfirmedTxWithBroadcastAttempt(t *testing.T, store esStore.Sto
 	attempt.SignedRawTx = rlp.Bytes()
 	attempt.State = models.TxAttemptStateBroadcast
 	require.NoError(t, store.PutTxAttempt(attempt))
-	require.NoError(t, store.AddAttemptToTx(tx, attempt))
+	require.NoError(t, store.AddOrUpdateAttempt(tx, attempt))
 
 	account, err := store.GetAccount(tx.FromAddress)
 	require.NoError(t, err)
@@ -124,7 +124,7 @@ func MustInsertConfirmedTxWithAttempt(t *testing.T, store esStore.Store, nonce i
 	attempt.BroadcastBeforeBlockNum = broadcastBeforeBlockNum
 	attempt.State = models.TxAttemptStateBroadcast
 	require.NoError(t, store.PutTxAttempt(attempt))
-	require.NoError(t, store.AddAttemptToTx(tx, attempt))
+	require.NoError(t, store.AddOrUpdateAttempt(tx, attempt))
 
 	account, err := store.GetAccount(tx.FromAddress)
 	require.NoError(t, err)
@@ -147,7 +147,7 @@ func MustInsertInProgressTxWithAttempt(t *testing.T, store esStore.Store, nonce 
 	attempt.SignedRawTx = rlp.Bytes()
 	attempt.State = models.TxAttemptStateInProgress
 	require.NoError(t, store.PutTxAttempt(attempt))
-	require.NoError(t, store.AddAttemptToTx(tx, attempt))
+	require.NoError(t, store.AddOrUpdateAttempt(tx, attempt))
 
 	account, err := store.GetAccount(tx.FromAddress)
 	require.NoError(t, err)
@@ -177,7 +177,7 @@ func MustAddAttemptToTx(t *testing.T, store esStore.Store, txID uuid.UUID, attem
 
 	tx, err := store.GetTx(txID)
 	require.NoError(t, err)
-	require.NoError(t, store.AddAttemptToTx(tx, attempt))
+	require.NoError(t, store.AddOrUpdateAttempt(tx, attempt))
 }
 
 func MustInsertTxReceipt(
